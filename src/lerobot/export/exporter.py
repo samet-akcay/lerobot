@@ -224,6 +224,8 @@ def _export_onnx(
         dynamic_axes[name] = {0: "batch_size"}
 
     # Export to ONNX
+    # Use dynamo=False to use the legacy TorchScript-based exporter which supports dynamic_axes
+    # The new dynamo-based exporter in PyTorch 2.9+ requires dynamic_shapes instead
     torch.onnx.export(
         wrapper,
         example_inputs,
@@ -233,6 +235,7 @@ def _export_onnx(
         dynamic_axes=dynamic_axes,
         opset_version=opset_version,
         do_constant_folding=True,
+        dynamo=False,
     )
 
     # Build tensor specs from example batch
@@ -527,6 +530,7 @@ def _export_two_phase_onnx(
         dynamic_axes=encoder_dynamic_axes,
         opset_version=opset_version,
         do_constant_folding=True,
+        dynamo=False,
     )
 
     _fix_onnx_gather_indices(encoder_path)
@@ -551,6 +555,7 @@ def _export_two_phase_onnx(
         dynamic_axes=denoise_dynamic_axes,
         opset_version=opset_version,
         do_constant_folding=True,
+        dynamo=False,
     )
 
     _fix_onnx_double_to_float(denoise_path)
