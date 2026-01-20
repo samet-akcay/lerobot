@@ -12,11 +12,11 @@ The export system converts PyTorch policies into self-contained **PolicyPackages
 
 Three inference patterns are supported:
 
-| Pattern | Policies | Description |
-|---------|----------|-------------|
-| **Single-pass** | ACT, VQ-BeT | One forward pass produces action chunk |
-| **Iterative** | Diffusion | Multiple denoising steps refine actions |
-| **Two-phase** | PI0, SmolVLA | Encoder (once) + iterative denoise |
+| Pattern         | Policies     | Description                             |
+| --------------- | ------------ | --------------------------------------- |
+| **Single-pass** | ACT, VQ-BeT  | One forward pass produces action chunk  |
+| **Iterative**   | Diffusion    | Multiple denoising steps refine actions |
+| **Two-phase**   | PI0, SmolVLA | Encoder (once) + iterative denoise      |
 
 ## Quick Start
 
@@ -89,7 +89,8 @@ policy = ACTPolicy.from_pretrained("lerobot/act_aloha_sim_transfer_cube_human")
 export_policy(policy, output_dir="./act_package")
 ```
 
-**Inputs**: `observation.state`, `observation.images.*`  
+**Inputs**: `observation.state`, `observation.images.*`
+
 **Outputs**: `action` with shape `[B, chunk_size, action_dim]`
 
 ### Diffusion (Iterative)
@@ -104,7 +105,8 @@ policy = DiffusionPolicy.from_pretrained("lerobot/diffusion_pusht")
 export_policy(policy, output_dir="./diffusion_package")
 ```
 
-**Inputs**: `observation.state`, `observation.images.*`, `x_t`, `timestep`  
+**Inputs**: `observation.state`, `observation.images.*`, `x_t`, `timestep`
+
 **Outputs**: `v_t` (velocity prediction)
 
 The manifest includes scheduler configuration for the runtime to execute the denoising loop.
@@ -124,10 +126,12 @@ policy = PI0Policy.from_pretrained("lerobot/pi0_base")
 export_policy(policy, output_dir="./pi0_package")
 ```
 
-**Encoder inputs**: `image_0`, `img_mask_0`, `lang_tokens`, `lang_masks`, `state`  
+**Encoder inputs**: `image_0`, `img_mask_0`, `lang_tokens`, `lang_masks`, `state`
+
 **Encoder outputs**: `prefix_pad_mask`, `past_key_*`, `past_value_*`
 
-**Denoise inputs**: `state`, `x_t`, `timestep`, `prefix_pad_mask`, `past_key_*`, `past_value_*`  
+**Denoise inputs**: `state`, `x_t`, `timestep`, `prefix_pad_mask`, `past_key_*`, `past_value_*`
+
 **Denoise outputs**: `v_t`
 
 ## Implementing Export for Custom Policies
@@ -143,7 +147,7 @@ from lerobot.export.protocols import ExportableTwoPhase, TwoPhaseExportConfig
 
 class MyVLAPolicy(PreTrainedPolicy):
     # ... policy implementation ...
-    
+
     def get_two_phase_export_config(self) -> TwoPhaseExportConfig:
         return TwoPhaseExportConfig(
             num_layers=self.model.num_layers,
@@ -155,17 +159,17 @@ class MyVLAPolicy(PreTrainedPolicy):
             num_steps=self.config.num_inference_steps,
             state_in_denoise=True,
         )
-    
+
     def get_encoder_module(self, num_images: int = 1) -> nn.Module:
         return MyEncoderWrapper(self, num_images)
-    
+
     def get_denoise_module(self) -> nn.Module:
         return MyDenoiseWrapper(self)
-    
+
     def prepare_encoder_inputs(self, example_batch):
         # Return (input_tensors, input_names, num_images, input_mapping)
         ...
-    
+
     def prepare_denoise_inputs(self, prefix_len, device):
         # Return (input_tensors, input_names)
         ...
@@ -184,10 +188,10 @@ class MyPolicy(PreTrainedPolicy):
             chunk_size=self.config.chunk_size,
             action_dim=self.config.action_feature.shape[0],
         )
-    
+
     def get_forward_module(self) -> nn.Module:
         return MyForwardWrapper(self)
-    
+
     def prepare_forward_inputs(self, example_batch):
         # Return (input_tensors, input_names, output_names)
         ...
@@ -208,10 +212,10 @@ class MyDiffusionPolicy(PreTrainedPolicy):
             num_inference_steps=self.config.num_inference_steps,
             scheduler_type="ddpm",
         )
-    
+
     def get_denoise_module(self) -> nn.Module:
         return MyDenoiseWrapper(self)
-    
+
     def prepare_denoise_inputs(self, example_batch):
         # Return (input_tensors, input_names, output_names)
         ...
@@ -221,9 +225,9 @@ class MyDiffusionPolicy(PreTrainedPolicy):
 
 The export system supports multiple inference backends:
 
-| Backend | Description |
-|---------|-------------|
-| `onnx` | ONNX Runtime (default, cross-platform) |
+| Backend    | Description                                   |
+| ---------- | --------------------------------------------- |
+| `onnx`     | ONNX Runtime (default, cross-platform)        |
 | `openvino` | Intel OpenVINO (optimized for Intel hardware) |
 
 ```python
@@ -239,17 +243,17 @@ The `manifest.json` describes the exported policy:
 {
   "policy": {
     "name": "act",
-    "source": {"repo_id": "lerobot/act_aloha_sim"}
+    "source": { "repo_id": "lerobot/act_aloha_sim" }
   },
   "artifacts": {
     "onnx": "artifacts/model.onnx"
   },
   "io": {
     "inputs": [
-      {"name": "observation.state", "dtype": "float32", "shape": ["B", 14]}
+      { "name": "observation.state", "dtype": "float32", "shape": ["B", 14] }
     ],
     "outputs": [
-      {"name": "action", "dtype": "float32", "shape": ["B", 100, 14]}
+      { "name": "action", "dtype": "float32", "shape": ["B", 100, 14] }
     ]
   },
   "action": {
