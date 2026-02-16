@@ -200,7 +200,7 @@ def _export_onnx(
             example_inputs, input_names, output_names = policy.prepare_forward_inputs(example_batch)
             export_batch = dict(zip(input_names, example_inputs, strict=True))
         else:
-            wrapper, input_names, output_names, export_batch = _create_single_shot_wrapper(
+            wrapper, input_names, output_names, export_batch = _create_single_pass_wrapper(
                 policy, example_batch
             )
             example_inputs = tuple(export_batch[name] for name in input_names if name in export_batch)
@@ -260,11 +260,11 @@ def _export_onnx(
     return input_specs, output_specs
 
 
-def _create_single_shot_wrapper(
+def _create_single_pass_wrapper(
     policy: PreTrainedPolicy,
     example_batch: dict[str, Tensor],
 ) -> tuple[nn.Module, list[str], list[str], dict[str, Tensor]]:
-    class SingleShotWrapper(nn.Module):
+    class SinglePassWrapper(nn.Module):
         def __init__(self, policy: PreTrainedPolicy):
             super().__init__()
             self.policy = policy
@@ -290,7 +290,7 @@ def _create_single_shot_wrapper(
     input_names = list(example_batch.keys())
     output_names = ["action"]
 
-    return SingleShotWrapper(policy), input_names, output_names, example_batch
+    return SinglePassWrapper(policy), input_names, output_names, example_batch
 
 
 def _create_iterative_wrapper(
@@ -697,6 +697,7 @@ def _build_manifest(
 
     policy_info = PolicyInfo(
         name=policy_name,
+        kind=inference_type,
         source=PolicySource(
             repo_id=getattr(config, "repo_id", None),
             revision=getattr(config, "revision", None),

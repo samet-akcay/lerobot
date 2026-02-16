@@ -173,9 +173,9 @@ class TestDiffusionExport:
 
 class TestDiffusionRuntime:
     @pytest.mark.slow
-    def test_create_runtime_returns_iterative(self, tmp_path: Path):
+    def test_create_runner_returns_iterative(self, tmp_path: Path):
         from lerobot.export import export_policy
-        from lerobot.export.runtime import IterativeRuntime, create_runtime
+        from lerobot.export.runtime import IterativeRunner, create_runner
 
         policy, batch = create_diffusion_policy_and_batch()
 
@@ -186,6 +186,6 @@ class TestDiffusionRuntime:
             example_batch=batch,
         )
 
-        runtime = create_runtime(package_path, backend="onnx", device="cpu")
+        runtime = create_runner(package_path, backend="onnx", device="cpu")
 
-        assert isinstance(runtime, IterativeRuntime)
+        assert isinstance(runtime, IterativeRunner)

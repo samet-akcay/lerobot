@@ -171,7 +171,7 @@ class TestSmolVLAExport:
     @pytest.mark.slow
     def test_runtime_forward_pass(self, tmp_path: Path):
         from lerobot.export import export_policy, load
-        from lerobot.export.runtime import TwoPhaseRuntime
+        from lerobot.export.runtime import TwoPhaseRunner
 
         policy, batch = create_smolvla_policy_and_batch(device="cuda")
 
@@ -183,7 +183,7 @@ class TestSmolVLAExport:
         )
 
         runtime = load(package_path, backend="onnx", device="cpu")
-        assert isinstance(runtime, TwoPhaseRuntime)
+        assert isinstance(runtime, TwoPhaseRunner)
 
         obs_numpy = to_numpy(batch)
         action_chunk = runtime.predict_action_chunk(obs_numpy)

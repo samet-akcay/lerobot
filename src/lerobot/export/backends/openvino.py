@@ -13,7 +13,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""OpenVINO backend for model execution."""
+"""OpenVINO runtime adapter for model execution."""
 
 from __future__ import annotations
 
@@ -26,15 +26,15 @@ if TYPE_CHECKING:
     from numpy.typing import NDArray
 
 
-class OpenVINOBackend:
-    """OpenVINO backend for model inference.
+class OpenVINORuntimeAdapter:
+    """OpenVINO runtime adapter for model inference.
 
-    This backend wraps OpenVINO's Core and CompiledModel to provide a simple
+    This adapter wraps OpenVINO's Core and CompiledModel to provide a simple
     interface for running models optimized for Intel hardware.
     """
 
     def __init__(self, model_path: Path | str, device: str = "cpu"):
-        """Initialize the OpenVINO backend.
+        """Initialize the OpenVINO runtime adapter.
 
         Args:
             model_path: Path to the ONNX or OpenVINO IR model file.
@@ -182,4 +182,4 @@ class OpenVINOBackend:
         return None
 
     def __repr__(self) -> str:
-        return f"OpenVINOBackend(model={self._model_path.name}, device={self._device})"
+        return f"OpenVINORuntimeAdapter(model={self._model_path.name}, device={self._device})"

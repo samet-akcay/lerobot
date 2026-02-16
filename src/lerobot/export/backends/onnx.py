@@ -13,7 +13,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""ONNX Runtime backend for model execution."""
+"""ONNX runtime adapter for model execution."""
 
 from __future__ import annotations
 
@@ -26,15 +26,15 @@ if TYPE_CHECKING:
     from numpy.typing import NDArray
 
 
-class ONNXBackend:
-    """ONNX Runtime backend for model inference.
+class ONNXRuntimeAdapter:
+    """ONNX Runtime adapter for model inference.
 
-    This backend wraps onnxruntime.InferenceSession to provide a simple
+    This adapter wraps onnxruntime.InferenceSession to provide a simple
     interface for running ONNX models.
     """
 
     def __init__(self, model_path: Path | str, device: str = "cpu"):
-        """Initialize the ONNX Runtime backend.
+        """Initialize the ONNX runtime adapter.
 
         Args:
             model_path: Path to the ONNX model file.
@@ -146,4 +146,4 @@ class ONNXBackend:
         return None
 
     def __repr__(self) -> str:
-        return f"ONNXBackend(model={self._model_path.name}, device={self._device})"
+        return f"ONNXRuntimeAdapter(model={self._model_path.name}, device={self._device})"

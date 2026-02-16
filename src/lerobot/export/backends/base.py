@@ -13,7 +13,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Backend protocol and factory for model execution."""
+"""Runtime adapter protocol and factory for model execution."""
 
 from __future__ import annotations
 
@@ -26,11 +26,11 @@ if TYPE_CHECKING:
     from numpy.typing import NDArray
 
 
-class Backend(Protocol):
+class RuntimeAdapter(Protocol):
     """Minimal interface for model execution.
 
-    Backends are intentionally minimal—they execute a single forward pass.
-    The runtime handles the higher-level logic like normalization and iterative loops.
+    Runtime adapters are intentionally minimal—they execute a single forward pass.
+    The runner handles the higher-level logic like normalization and iterative loops.
     """
 
     @property
@@ -55,27 +55,27 @@ class Backend(Protocol):
         ...
 
 
-def get_backend(backend_name: str, model_path: Path, device: str = "cpu") -> Backend:
-    """Factory function to get the appropriate backend.
+def get_runtime_adapter(adapter_name: str, model_path: Path, device: str = "cpu") -> RuntimeAdapter:
+    """Factory function to get the appropriate runtime adapter.
 
     Args:
-        backend_name: Name of the backend ("onnx" or "openvino").
+        adapter_name: Name of the runtime adapter ("onnx" or "openvino").
         model_path: Path to the model file.
         device: Device for inference ("cpu", "cuda", "cuda:0").
 
     Returns:
-        Backend instance ready for inference.
+        RuntimeAdapter instance ready for inference.
 
     Raises:
-        ValueError: If the backend is not supported.
+        ValueError: If the adapter is not supported.
     """
-    if backend_name == "onnx":
-        from .onnx import ONNXBackend
+    if adapter_name == "onnx":
+        from .onnx import ONNXRuntimeAdapter
 
-        return ONNXBackend(model_path, device)
-    elif backend_name == "openvino":
-        from .openvino import OpenVINOBackend
+        return ONNXRuntimeAdapter(model_path, device)
+    elif adapter_name == "openvino":
+        from .openvino import OpenVINORuntimeAdapter
 
-        return OpenVINOBackend(model_path, device)
+        return OpenVINORuntimeAdapter(model_path, device)
     else:
-        raise ValueError(f"Unsupported backend: {backend_name}. Supported: onnx, openvino")
+        raise ValueError(f"Unsupported runtime adapter: {adapter_name}. Supported: onnx, openvino")

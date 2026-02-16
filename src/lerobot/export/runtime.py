@@ -13,7 +13,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Runtime implementations for executing exported policies."""
+"""Runner implementations for executing exported policies."""
 
 from __future__ import annotations
 
@@ -25,7 +25,7 @@ from typing import TYPE_CHECKING, Protocol
 
 import numpy as np
 
-from .backends import Backend, get_backend
+from .backends import RuntimeAdapter, get_runtime_adapter
 from .manifest import IterativeConfig, Manifest, TwoPhaseConfig
 from .normalize import Normalizer
 from .schedulers import create_scheduler
@@ -86,7 +86,7 @@ def _get_output_by_names(
     )
 
 
-class PolicyRuntime(Protocol):
+class InferenceRunner(Protocol):
     """Interface for running exported policies."""
 
     @property
@@ -110,38 +110,38 @@ class PolicyRuntime(Protocol):
         ...
 
 
-class SingleShotRuntime:
-    """Runtime for single_shot policies like ACT.
+class SinglePassRunner:
+    """Runner for single-pass policies like ACT.
 
-    Single-shot policies produce an action chunk in one forward pass.
+    Single-pass policies produce an action chunk in one forward pass.
     """
 
     def __init__(
         self,
         package_path: Path,
         manifest: Manifest,
-        backend_name: str,
+        adapter_name: str,
         device: str = "cpu",
     ):
-        """Initialize the single-shot runtime.
+        """Initialize the single-pass runner.
 
         Args:
             package_path: Path to the PolicyPackage directory.
             manifest: Loaded manifest.
-            backend_name: Backend to use ("onnx" or "openvino").
+            adapter_name: Runtime adapter to use ("onnx" or "openvino").
             device: Device for inference.
         """
         self._manifest = manifest
         self._package_path = Path(package_path)
         self._device = device
 
-        # Load backend
-        artifact_path = manifest.artifacts.get(backend_name)
+        # Load runtime adapter
+        artifact_path = manifest.artifacts.get(adapter_name)
         if artifact_path is None:
-            raise ValueError(f"No artifact found for backend: {backend_name}")
+            raise ValueError(f"No artifact found for runtime adapter: {adapter_name}")
 
         model_path = self._package_path / artifact_path
-        self._backend: Backend = get_backend(backend_name, model_path, device)
+        self._adapter: RuntimeAdapter = get_runtime_adapter(adapter_name, model_path, device)
 
         # Load normalizer if available
         self._normalizer: Normalizer | None = None
@@ -156,7 +156,7 @@ class SingleShotRuntime:
         return self._manifest
 
     def predict_action_chunk(self, observation: dict[str, NDArray[np.floating]]) -> NDArray[np.floating]:
-        """Run single-shot inference and return action chunk.
+        """Run single-pass inference and return action chunk.
 
         Args:
             observation: Dict mapping input names to numpy arrays.
@@ -167,14 +167,14 @@ class SingleShotRuntime:
         obs_normalized = self._normalizer.normalize_inputs(observation) if self._normalizer else observation
         obs_normalized = {k: v.astype(np.float32) for k, v in obs_normalized.items()}
 
-        outputs = self._backend.run(obs_normalized)
+        outputs = self._adapter.run(obs_normalized)
 
         action_key = self._manifest.io.outputs[0].name
         action = _get_output_by_names(
             outputs,
             primary_name=action_key,
             fallback_names=["action"],
-            context="SingleShotRuntime.predict_action_chunk",
+            context="SinglePassRunner.predict_action_chunk",
         )
 
         if self._normalizer:
@@ -186,12 +186,12 @@ class SingleShotRuntime:
         return action
 
     def reset(self) -> None:
-        """Reset internal state. No-op for single-shot policies."""
+        """Reset internal state. No-op for single-pass policies."""
         pass
 
 
-class IterativeRuntime:
-    """Runtime for iterative policies (flow matching, diffusion).
+class IterativeRunner:
+    """Runner for iterative policies (flow matching, diffusion).
 
     Supports Euler (flow matching), DDPM, and DDIM schedulers.
     """
@@ -200,22 +200,22 @@ class IterativeRuntime:
         self,
         package_path: Path,
         manifest: Manifest,
-        backend_name: str,
+        adapter_name: str,
         device: str = "cpu",
     ):
         self._manifest = manifest
         self._package_path = Path(package_path)
         self._device = device
 
-        artifact_path = manifest.artifacts.get(backend_name)
-        if artifact_path is None and backend_name == "openvino":
+        artifact_path = manifest.artifacts.get(adapter_name)
+        if artifact_path is None and adapter_name == "openvino":
             artifact_path = manifest.artifacts.get("onnx")
         if artifact_path is None:
-            raise ValueError(f"No artifact found for backend: {backend_name}")
+            raise ValueError(f"No artifact found for runtime adapter: {adapter_name}")
 
         model_path = self._package_path / artifact_path
-        actual_backend = "onnx" if backend_name.startswith("onnx") else backend_name
-        self._backend: Backend = get_backend(actual_backend, model_path, device)
+        actual_adapter = "onnx" if adapter_name.startswith("onnx") else adapter_name
+        self._adapter: RuntimeAdapter = get_runtime_adapter(actual_adapter, model_path, device)
 
         self._normalizer: Normalizer | None = None
         if manifest.normalization:
@@ -292,13 +292,13 @@ class IterativeRuntime:
             timestep = np.full((batch_size,), t, dtype=np.float32)
 
             inputs = {"x_t": x_t, "timestep": timestep, **obs_normalized}
-            outputs = self._backend.run(inputs)
+            outputs = self._adapter.run(inputs)
 
             v_t = _get_output_by_names(
                 outputs,
                 primary_name="v_t",
                 fallback_names=["velocity"],
-                context="IterativeRuntime._run_euler_loop",
+                context="IterativeRunner._run_euler_loop",
             )
 
             x_t = x_t + dt * v_t
@@ -319,13 +319,13 @@ class IterativeRuntime:
             timestep_array = np.array([t], dtype=np.int64)
 
             inputs = {"x_t": x_t, "timestep": timestep_array.astype(np.float32), **obs_normalized}
-            outputs = self._backend.run(inputs)
+            outputs = self._adapter.run(inputs)
 
             model_output = _get_output_by_names(
                 outputs,
                 primary_name="v_t",
                 fallback_names=["velocity", "noise_pred"],
-                context="IterativeRuntime._run_diffusion_loop",
+                context="IterativeRunner._run_diffusion_loop",
             )
 
             x_t = scheduler.step(model_output, int(t), x_t, generator=generator)
@@ -336,8 +336,8 @@ class IterativeRuntime:
         pass
 
 
-class TwoPhaseRuntime:
-    """Runtime for two-phase VLA policies (PI0, SmolVLA).
+class TwoPhaseRunner:
+    """Runner for two-phase VLA policies (PI0, SmolVLA).
 
     Two-phase policies have:
     1. Encoder: Encodes images/language/state → KV cache (run once)
@@ -348,7 +348,7 @@ class TwoPhaseRuntime:
         self,
         package_path: Path,
         manifest: Manifest,
-        backend_name: str,
+        adapter_name: str,
         device: str = "cpu",
     ):
         self._manifest = manifest
@@ -369,9 +369,9 @@ class TwoPhaseRuntime:
         encoder_path = self._package_path / encoder_artifact
         denoise_path = self._package_path / denoise_artifact
 
-        actual_backend = "onnx" if backend_name.startswith("onnx") else backend_name
-        self._encoder_backend: Backend = get_backend(actual_backend, encoder_path, device)
-        self._denoise_backend: Backend = get_backend(actual_backend, denoise_path, device)
+        actual_adapter = "onnx" if adapter_name.startswith("onnx") else adapter_name
+        self._encoder_adapter: RuntimeAdapter = get_runtime_adapter(actual_adapter, encoder_path, device)
+        self._denoise_adapter: RuntimeAdapter = get_runtime_adapter(actual_adapter, denoise_path, device)
 
         self._normalizer: Normalizer | None = None
         if manifest.normalization:
@@ -442,7 +442,7 @@ class TwoPhaseRuntime:
                 padding = np.zeros((*state.shape[:-1], self._state_dim - current_dim), dtype=state.dtype)
                 obs_normalized["state"] = np.concatenate([state, padding], axis=-1)
 
-        encoder_outputs = self._encoder_backend.run(obs_normalized)
+        encoder_outputs = self._encoder_adapter.run(obs_normalized)
 
         prefix_pad_mask = encoder_outputs.get("prefix_pad_mask")
         if prefix_pad_mask is None:
@@ -477,13 +477,13 @@ class TwoPhaseRuntime:
             if "state" in obs_normalized:
                 denoise_inputs["state"] = obs_normalized["state"]
 
-            outputs = self._denoise_backend.run(denoise_inputs)
+            outputs = self._denoise_adapter.run(denoise_inputs)
 
             v_t = _get_output_by_names(
                 outputs,
                 primary_name="v_t",
                 fallback_names=["velocity"],
-                context="TwoPhaseRuntime._run_denoise_loop",
+                context="TwoPhaseRunner._run_denoise_loop",
             )
 
             x_t = x_t + dt * v_t
@@ -500,26 +500,26 @@ class TwoPhaseRuntime:
 
 
 class ActionChunkingWrapper:
-    """Wraps PolicyRuntime to provide single-action interface.
+    """Wraps InferenceRunner to provide single-action interface.
 
     This wrapper manages an action queue internally and provides actions
     one at a time, matching the semantics of Policy.select_action() from
     eager inference.
     """
 
-    def __init__(self, runtime: PolicyRuntime):
+    def __init__(self, runner: InferenceRunner):
         """Initialize the action chunking wrapper.
 
         Args:
-            runtime: Underlying PolicyRuntime instance.
+            runner: Underlying InferenceRunner instance.
         """
-        self.runtime = runtime
+        self.runner = runner
         self._queue: deque[NDArray[np.floating]] = deque()
 
     def reset(self) -> None:
-        """Clear action queue and reset runtime."""
+        """Clear action queue and reset runner."""
         self._queue.clear()
-        self.runtime.reset()
+        self.runner.reset()
 
     def select_action(self, observation: dict[str, NDArray[np.floating]]) -> NDArray[np.floating]:
         """Return single action, managing queue internally.
@@ -533,8 +533,8 @@ class ActionChunkingWrapper:
             Single action with shape (action_dim,).
         """
         if len(self._queue) == 0:
-            chunk = self.runtime.predict_action_chunk(observation)
-            n_steps = self.runtime.manifest.action.n_action_steps
+            chunk = self.runner.predict_action_chunk(observation)
+            n_steps = self.runner.manifest.action.n_action_steps
 
             # Ensure chunk is 2D (chunk_size, action_dim)
             if chunk.ndim == 3:
@@ -547,20 +547,20 @@ class ActionChunkingWrapper:
         return self._queue.popleft()
 
 
-def create_runtime(
+def create_runner(
     package_path: Path | str,
     backend: str | None = None,
     device: str = "cpu",
-) -> PolicyRuntime:
-    """Create the appropriate runtime for a PolicyPackage.
+) -> InferenceRunner:
+    """Create the appropriate runner for a PolicyPackage.
 
     Args:
         package_path: Path to the PolicyPackage directory.
-        backend: Backend to use (auto-detected if None).
+        backend: Runtime adapter to use ("onnx" or "openvino"). Auto-detected if None.
         device: Device for inference.
 
     Returns:
-        PolicyRuntime instance (SingleShotRuntime or IterativeRuntime).
+        InferenceRunner instance (SinglePassRunner, IterativeRunner, or TwoPhaseRunner).
     """
     package_path = Path(package_path)
     manifest_path = package_path / "manifest.json"
@@ -580,12 +580,12 @@ def create_runtime(
         else:
             backend = next(iter(manifest.artifacts.keys()))
 
-    # Create appropriate runtime based on inference config type
+    # Create appropriate runner based on inference config type
     if manifest.is_single_pass:
-        return SingleShotRuntime(package_path, manifest, backend, device)
+        return SinglePassRunner(package_path, manifest, backend, device)
     elif manifest.is_iterative:
-        return IterativeRuntime(package_path, manifest, backend, device)
+        return IterativeRunner(package_path, manifest, backend, device)
     elif manifest.is_two_phase:
-        return TwoPhaseRuntime(package_path, manifest, backend, device)
+        return TwoPhaseRunner(package_path, manifest, backend, device)
     else:
         raise ValueError(f"Unknown inference config type: {type(manifest.inference)}")

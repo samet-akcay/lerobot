@@ -143,10 +143,10 @@ class TestACTBackends:
             example_batch=batch,
         )
 
-        from lerobot.export.backends.onnx import ONNXBackend
+        from lerobot.export.backends.onnx import ONNXRuntimeAdapter
 
         model_path = package_path / "artifacts" / "model.onnx"
-        backend = ONNXBackend(model_path, device="cpu")
+        backend = ONNXRuntimeAdapter(model_path, device="cpu")
 
         assert backend.input_names is not None
         assert backend.output_names is not None
@@ -166,10 +166,10 @@ class TestACTBackends:
             example_batch=batch,
         )
 
-        from lerobot.export.backends.openvino import OpenVINOBackend
+        from lerobot.export.backends.openvino import OpenVINORuntimeAdapter
 
         model_path = package_path / "artifacts" / "model.onnx"
-        backend = OpenVINOBackend(model_path, device="cpu")
+        backend = OpenVINORuntimeAdapter(model_path, device="cpu")
 
         assert backend.input_names is not None
         assert backend.output_names is not None
@@ -190,13 +190,13 @@ class TestACTBackends:
             example_batch=batch,
         )
 
-        from lerobot.export.backends.onnx import ONNXBackend
-        from lerobot.export.backends.openvino import OpenVINOBackend
+        from lerobot.export.backends.onnx import ONNXRuntimeAdapter
+        from lerobot.export.backends.openvino import OpenVINORuntimeAdapter
 
         model_path = package_path / "artifacts" / "model.onnx"
 
-        onnx_backend = ONNXBackend(model_path, device="cpu")
-        openvino_backend = OpenVINOBackend(model_path, device="cpu")
+        onnx_backend = ONNXRuntimeAdapter(model_path, device="cpu")
+        openvino_backend = OpenVINORuntimeAdapter(model_path, device="cpu")
 
         obs_numpy = to_numpy(batch)
         inputs = {k: v for k, v in obs_numpy.items() if k in onnx_backend.input_names}
@@ -216,9 +216,9 @@ class TestACTBackends:
 
 class TestACTRuntime:
     @pytest.mark.slow
-    def test_create_runtime_returns_single_shot(self, tmp_path: Path):
+    def test_create_runner_returns_single_pass(self, tmp_path: Path):
         from lerobot.export import export_policy
-        from lerobot.export.runtime import SingleShotRuntime, create_runtime
+        from lerobot.export.runtime import SinglePassRunner, create_runner
 
         policy, batch = create_act_policy_and_batch()
 
@@ -229,6 +229,6 @@ class TestACTRuntime:
             example_batch=batch,
         )
 
-        runtime = create_runtime(package_path, backend="onnx", device="cpu")
+        runtime = create_runner(package_path, backend="onnx", device="cpu")
 
-        assert isinstance(runtime, SingleShotRuntime)
+        assert isinstance(runtime, SinglePassRunner)

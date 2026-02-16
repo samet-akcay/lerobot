@@ -102,12 +102,15 @@ class PolicyInfo:
     """Policy metadata."""
 
     name: str
+    kind: str | None = None
     source: PolicySource | None = None
 
     def to_dict(self) -> dict[str, Any]:
         result = {
             "name": self.name,
         }
+        if self.kind:
+            result["kind"] = self.kind
         if self.source:
             result["source"] = self.source.to_dict()
         return result
@@ -116,6 +119,7 @@ class PolicyInfo:
     def from_dict(cls, data: dict[str, Any]) -> PolicyInfo:
         return cls(
             name=data["name"],
+            kind=data.get("kind"),
             source=PolicySource.from_dict(data["source"]) if "source" in data else None,
         )
 

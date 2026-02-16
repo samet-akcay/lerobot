@@ -19,13 +19,13 @@ Export LeRobot policies to portable formats (ONNX, OpenVINO) for inference
 without the full training stack.
 
 Supported Policies:
-    - ACT: Single-shot transformer policy
+    - ACT: Single-pass transformer policy
     - Diffusion: Iterative diffusion policy (DDIM/DDPM schedulers)
     - PI0: Two-phase VLA with encoder + decoder (requires patched transformers)
     - SmolVLA: Two-phase VLA with encoder + decoder
 
-Supported Backends:
-    - ONNX Runtime: Primary backend, works on all platforms
+Supported Runtime Adapters:
+    - ONNX Runtime: Primary adapter, works on all platforms
     - OpenVINO: Optimized for Intel hardware
 
 Example::
@@ -33,8 +33,8 @@ Example::
     from lerobot.export import export_policy, load
 
     package_path = export_policy(policy, "./exported", backend="onnx")
-    runtime = load(package_path, backend="onnx", device="cpu")
-    action_chunk = runtime.predict_action_chunk(observation)
+    runner = load(package_path, backend="onnx", device="cpu")
+    action_chunk = runner.predict_action_chunk(observation)
 """
 
 from __future__ import annotations
@@ -46,10 +46,11 @@ from .exporter import export_policy
 from .manifest import InferenceConfig, IterativeConfig, Manifest, TwoPhaseConfig
 from .runtime import (
     ActionChunkingWrapper,
-    IterativeRuntime,
-    PolicyRuntime,
-    SingleShotRuntime,
-    create_runtime,
+    InferenceRunner,
+    IterativeRunner,
+    SinglePassRunner,
+    TwoPhaseRunner,
+    create_runner,
 )
 
 if TYPE_CHECKING:
@@ -63,33 +64,36 @@ def load(
     package_path: str | Path,
     backend: str | None = None,
     device: str = "cpu",
-) -> PolicyRuntime:
-    """Load a PolicyPackage and return a runtime.
+) -> InferenceRunner:
+    """Load a PolicyPackage and return a runner.
 
     Args:
         package_path: Path to PolicyPackage directory.
-        backend: Backend to use (auto-detected from artifacts if None).
+        backend: Runtime adapter to use (auto-detected from artifacts if None).
         device: Device for inference ("cpu", "cuda", "cuda:0").
 
     Returns:
-        PolicyRuntime instance ready for inference.
+        InferenceRunner instance ready for inference.
 
     Example:
-        >>> runtime = load("./my_policy.pkg", backend="onnx", device="cuda")
-        >>> action_chunk = runtime.predict_action_chunk(observation)
+        >>> runner = load("./my_policy.pkg", backend="onnx", device="cuda")
+        >>> action_chunk = runner.predict_action_chunk(observation)
     """
-    return create_runtime(package_path, backend=backend, device=device)
+    return create_runner(package_path, backend=backend, device=device)
 
 
 __all__ = [
     # Main API
     "export_policy",
     "load",
-    # Runtime classes
-    "PolicyRuntime",
-    "SingleShotRuntime",
-    "IterativeRuntime",
+    # Runner classes
+    "InferenceRunner",
+    "SinglePassRunner",
+    "IterativeRunner",
+    "TwoPhaseRunner",
     "ActionChunkingWrapper",
+    # Factory
+    "create_runner",
     # Manifest and inference configs
     "Manifest",
     "InferenceConfig",

@@ -40,6 +40,7 @@ class TestManifestSchema:
         manifest = Manifest(
             policy=PolicyInfo(
                 name="test_policy",
+                kind="single_pass",
                 source=PolicySource(repo_id="test/repo"),
             ),
             artifacts={"onnx": "artifacts/model.onnx"},
@@ -57,6 +58,7 @@ class TestManifestSchema:
         loaded = Manifest.load(manifest_path)
 
         assert loaded.policy.name == "test_policy"
+        assert loaded.policy.kind == "single_pass"
         assert loaded.is_single_pass
         assert loaded.artifacts["onnx"] == "artifacts/model.onnx"
         assert loaded.action.dim == 6
@@ -85,6 +87,7 @@ class TestManifestSchema:
         manifest = Manifest(
             policy=PolicyInfo(
                 name="test_pi0_policy",
+                kind="two_phase",
                 source=PolicySource(repo_id="test/pi0"),
             ),
             artifacts={
@@ -109,6 +112,7 @@ class TestManifestSchema:
         loaded = Manifest.load(manifest_path)
 
         assert loaded.policy.name == "test_pi0_policy"
+        assert loaded.policy.kind == "two_phase"
         assert loaded.is_two_phase
         assert isinstance(loaded.inference, TwoPhaseConfig)
         assert loaded.inference.num_steps == 10
