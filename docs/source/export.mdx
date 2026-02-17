@@ -24,14 +24,16 @@ Export a trained policy:
 
 ```python
 from lerobot.policies.act.modeling_act import ACTPolicy
-from lerobot.export import export_policy
 
 # Load your trained policy
 policy = ACTPolicy.from_pretrained("your-username/your-act-policy")
 
 # Export to ONNX
-export_policy(policy, output_dir="./my_policy_package")
+policy.export("./my_policy_package")
 ```
+
+> **Note**: `policy.export()` is a convenience wrapper around `lerobot.export.export_policy()`.
+> You can also call it directly: `from lerobot.export import export_policy; export_policy(policy, "./my_policy_package")`.
 
 The resulting directory structure:
 
@@ -49,26 +51,25 @@ my_policy_package/
 Use the runtime API to run inference without PyTorch:
 
 ```python
-from lerobot.export import load_policy_package
+from lerobot.export import load
 
 # Load the exported package
-runtime = load_policy_package("./my_policy_package", backend="onnx")
+runner = load("./my_policy_package", backend="onnx")
 
 # Run inference
 observation = {
     "observation.state": np.array([[0.1, 0.2, 0.3, ...]]),  # [B, state_dim]
     "observation.images.top": np.array([[...]]),            # [B, C, H, W]
 }
-actions = runtime.predict_action_chunk(observation)
+actions = runner.predict_action_chunk(observation)
 # actions shape: [chunk_size, action_dim]
 ```
 
 ## Export Options
 
 ```python
-export_policy(
-    policy,
-    output_dir="./output",
+policy.export(
+    "./output",
     backend="onnx",              # Export format
     opset_version=17,            # ONNX opset version
     include_normalization=True,  # Include stats for input/output normalization
@@ -83,10 +84,9 @@ ACT policies export to a single `model.onnx` file:
 
 ```python
 from lerobot.policies.act.modeling_act import ACTPolicy
-from lerobot.export import export_policy
 
 policy = ACTPolicy.from_pretrained("lerobot/act_aloha_sim_transfer_cube_human")
-export_policy(policy, output_dir="./act_package")
+policy.export("./act_package")
 ```
 
 **Inputs**: `observation.state`, `observation.images.*`
@@ -99,10 +99,9 @@ Diffusion policies export the denoising network. The runtime handles the diffusi
 
 ```python
 from lerobot.policies.diffusion.modeling_diffusion import DiffusionPolicy
-from lerobot.export import export_policy
 
 policy = DiffusionPolicy.from_pretrained("lerobot/diffusion_pusht")
-export_policy(policy, output_dir="./diffusion_package")
+policy.export("./diffusion_package")
 ```
 
 **Inputs**: `observation.state`, `observation.images.*`, `x_t`, `timestep`
@@ -120,10 +119,9 @@ VLA policies export two ONNX files:
 
 ```python
 from lerobot.policies.pi0.modeling_pi0 import PI0Policy
-from lerobot.export import export_policy
 
 policy = PI0Policy.from_pretrained("lerobot/pi0_base")
-export_policy(policy, output_dir="./pi0_package")
+policy.export("./pi0_package")
 ```
 
 **Encoder inputs**: `image_0`, `img_mask_0`, `lang_tokens`, `lang_masks`, `state`
@@ -232,7 +230,7 @@ The export system supports multiple inference backends:
 
 ```python
 # Use OpenVINO backend
-runtime = load_policy_package("./my_package", backend="openvino", device="CPU")
+runner = load("./my_package", backend="openvino", device="CPU")
 ```
 
 ## Manifest Structure

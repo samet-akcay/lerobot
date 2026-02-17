@@ -44,7 +44,7 @@ from typing import TYPE_CHECKING
 
 from .exporter import export_policy
 from .manifest import InferenceConfig, IterativeConfig, Manifest, TwoPhaseConfig
-from .runtime import (
+from .runner import (
     ActionChunkingWrapper,
     InferenceRunner,
     IterativeRunner,
