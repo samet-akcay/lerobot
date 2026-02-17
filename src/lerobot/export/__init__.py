@@ -30,10 +30,10 @@ Supported Runtime Adapters:
 
 Example::
 
-    from lerobot.export import export_policy, load
+    from lerobot.export import export_policy, load_exported_policy
 
     package_path = export_policy(policy, "./exported", backend="onnx")
-    runner = load(package_path, backend="onnx", device="cpu")
+    runner = load_exported_policy(package_path, backend="onnx", device="cpu")
     action_chunk = runner.predict_action_chunk(observation)
 """
 
@@ -60,7 +60,7 @@ if TYPE_CHECKING:
     from lerobot.policies.pretrained import PreTrainedPolicy
 
 
-def load(
+def load_exported_policy(
     package_path: str | Path,
     backend: str | None = None,
     device: str = "cpu",
@@ -76,7 +76,7 @@ def load(
         InferenceRunner instance ready for inference.
 
     Example:
-        >>> runner = load("./my_policy.pkg", backend="onnx", device="cuda")
+        >>> runner = load_exported_policy("./my_policy.pkg", backend="onnx", device="cuda")
         >>> action_chunk = runner.predict_action_chunk(observation)
     """
     return create_runner(package_path, backend=backend, device=device)
@@ -85,7 +85,7 @@ def load(
 __all__ = [
     # Main API
     "export_policy",
-    "load",
+    "load_exported_policy",
     # Runner classes
     "InferenceRunner",
     "SinglePassRunner",

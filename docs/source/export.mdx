@@ -51,10 +51,10 @@ my_policy_package/
 Use the runtime API to run inference without PyTorch:
 
 ```python
-from lerobot.export import load
+from lerobot.export import load_exported_policy
 
 # Load the exported package
-runner = load("./my_policy_package", backend="onnx")
+runner = load_exported_policy("./my_policy_package", backend="onnx")
 
 # Run inference
 observation = {
@@ -230,7 +230,7 @@ The export system supports multiple inference backends:
 
 ```python
 # Use OpenVINO backend
-runner = load("./my_package", backend="openvino", device="CPU")
+runner = load_exported_policy("./my_package", backend="openvino", device="CPU")
 ```
 
 ## Manifest Structure
