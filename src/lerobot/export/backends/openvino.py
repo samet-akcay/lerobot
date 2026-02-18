@@ -128,7 +128,7 @@ class OpenVINORuntimeAdapter:
             raise ValueError(f"Missing required inputs: {missing}")
 
         # Map original input names to compiled names if they were renamed
-        mapped_inputs = {}
+        mapped_inputs: dict[str, NDArray[np.floating]] = {}
         for name, value in ov_inputs.items():
             compiled_name = self._input_name_mapping.get(name, name)
             mapped_inputs[compiled_name] = value
@@ -136,9 +136,11 @@ class OpenVINORuntimeAdapter:
         self._infer_request.infer(mapped_inputs)
 
         # Map compiled output names back to original names
-        outputs = {}
+        outputs: dict[str, NDArray[np.floating]] = {}
         for orig_name in self._output_names:
-            compiled_name = self._output_name_mapping.get(orig_name, orig_name)
+            compiled_name = self._output_name_mapping.get(orig_name) or orig_name
+            if compiled_name is None:
+                raise KeyError(f"Missing output name mapping for '{orig_name}'.")
             tensor = self._infer_request.get_tensor(compiled_name)
             outputs[orig_name] = tensor.data.copy()
 
@@ -155,20 +157,19 @@ class OpenVINORuntimeAdapter:
         """
         device = device.lower()
 
-        # Map common device names to OpenVINO equivalents
-        if device == "cpu":
-            return "CPU"
-        elif device.startswith("cuda") or device == "gpu":
+        if device.startswith("cuda") or device.startswith("xpu"):
             return "GPU"
-        elif device == "npu":
-            return "NPU"
-        elif device == "auto":
-            return "AUTO"
 
-        # Return uppercase version for other devices
-        return device.upper()
+        mapping = {
+            "cpu": "CPU",
+            "gpu": "GPU",
+            "npu": "NPU",
+            "auto": "AUTO",
+        }
 
-    def get_input_shape(self, name: str) -> list | None:
+        return mapping.get(device, device.upper())
+
+    def get_input_shape(self, name: str) -> list[int] | None:
         """Get the shape of an input tensor.
 
         Args:
