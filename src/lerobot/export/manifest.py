@@ -27,7 +27,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Any
 
-MANIFEST_FORMAT = "policy_package"
+MANIFEST_FORMAT = "lerobot_exported_policy"
 MANIFEST_VERSION = "1.0"
 
 
