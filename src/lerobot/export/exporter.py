@@ -136,7 +136,26 @@ def export_policy(
 
 
 def _detect_inference_type(policy: PreTrainedPolicy) -> str:
-    """Detect inference type: 'single_pass', 'iterative', or 'two_phase'."""
+    """Detect inference type: 'single_pass', 'iterative', or 'two_phase'.
+
+    Priority:
+    1. Policy's get_inference_type() hook (explicit declaration)
+    2. Class-name heuristics (fallback for backward compatibility)
+    """
+    VALID_TYPES = {"single_pass", "iterative", "two_phase"}
+
+    # Check if policy explicitly declares inference type via hook
+    if hasattr(policy, "get_inference_type"):
+        declared_type = policy.get_inference_type()
+        if declared_type is not None:
+            if declared_type not in VALID_TYPES:
+                raise ValueError(
+                    f"Invalid inference type '{declared_type}' from {policy.__class__.__name__}.get_inference_type(). "
+                    f"Must be one of: {VALID_TYPES}"
+                )
+            return declared_type
+
+    # Fallback: use class-name heuristics
     policy_class_name = policy.__class__.__name__.lower()
 
     if "pi0" in policy_class_name or "smolvla" in policy_class_name:
