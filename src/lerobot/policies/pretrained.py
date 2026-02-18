@@ -204,6 +204,22 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
         """
         raise NotImplementedError
 
+    def get_inference_type(self) -> str | None:
+        """Hook for policies to explicitly declare their inference type.
+
+        Returns:
+            str | None: One of 'single_pass', 'iterative', or 'two_phase'.
+                - 'single_pass': Forward pass returns action directly.
+                - 'iterative': Iterative refinement (e.g., diffusion, flow models).
+                - 'two_phase': Two-phase VLA (e.g., PI0, SmolVLA with encoder + denoise).
+                - None: Use fallback class-name heuristics.
+
+        Notes:
+            Override this method to explicitly declare inference type.
+            If not overridden, export will fall back to class-name heuristics.
+        """
+        return None  # None signals to use fallback heuristics
+
     def push_model_to_hub(
         self,
         cfg: TrainPipelineConfig,
