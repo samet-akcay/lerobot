@@ -21,14 +21,56 @@ The manifest is the contract between export and runtime. It is pure JSON data—
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass, field
+from dataclasses import MISSING, dataclass, field, fields, is_dataclass
 from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 MANIFEST_FORMAT = "lerobot_exported_policy"
 MANIFEST_VERSION = "1.0"
+
+
+def _serialize_value(value: Any) -> Any:
+    if is_dataclass(value):
+        return _dataclass_to_dict(value)
+    if isinstance(value, Enum):
+        return value.value
+    if isinstance(value, list):
+        return [_serialize_value(item) for item in value]
+    if isinstance(value, dict):
+        return {key: _serialize_value(val) for key, val in value.items() if val is not None}
+    return value
+
+
+def _dataclass_to_dict(instance: Any) -> dict[str, Any]:
+    result: dict[str, Any] = {}
+    for field_info in fields(instance):
+        value = getattr(instance, field_info.name)
+        if value is None:
+            continue
+        result[field_info.name] = _serialize_value(value)
+    return result
+
+
+def _build_dataclass(
+    cls: type[Any],
+    data: dict[str, Any],
+    converters: dict[str, Callable[[Any], Any]] | None = None,
+) -> Any:
+    values: dict[str, Any] = {}
+    field_converters = converters or {}
+    for field_info in fields(cls):
+        if field_info.name in data:
+            raw_value = data[field_info.name]
+            if field_info.name in field_converters:
+                values[field_info.name] = field_converters[field_info.name](raw_value)
+            else:
+                values[field_info.name] = raw_value
+            continue
+        if field_info.default is not MISSING or field_info.default_factory is not MISSING:
+            continue
+    return cls(**values)
 
 
 class NormalizationType(str, Enum):
@@ -51,23 +93,11 @@ class TensorSpec:
     description: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
-        result = {
-            "name": self.name,
-            "dtype": self.dtype,
-            "shape": self.shape,
-        }
-        if self.description:
-            result["description"] = self.description
-        return result
+        return _dataclass_to_dict(self)
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> TensorSpec:
-        return cls(
-            name=data["name"],
-            dtype=data["dtype"],
-            shape=data["shape"],
-            description=data.get("description"),
-        )
+        return _build_dataclass(cls, data)
 
 
 @dataclass
@@ -79,22 +109,11 @@ class PolicySource:
     commit: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
-        result = {}
-        if self.repo_id:
-            result["repo_id"] = self.repo_id
-        if self.revision:
-            result["revision"] = self.revision
-        if self.commit:
-            result["commit"] = self.commit
-        return result
+        return _dataclass_to_dict(self)
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> PolicySource:
-        return cls(
-            repo_id=data.get("repo_id"),
-            revision=data.get("revision"),
-            commit=data.get("commit"),
-        )
+        return _build_dataclass(cls, data)
 
 
 @dataclass
@@ -106,21 +125,14 @@ class PolicyInfo:
     source: PolicySource | None = None
 
     def to_dict(self) -> dict[str, Any]:
-        result = {
-            "name": self.name,
-        }
-        if self.kind:
-            result["kind"] = self.kind
-        if self.source:
-            result["source"] = self.source.to_dict()
-        return result
+        return _dataclass_to_dict(self)
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> PolicyInfo:
-        return cls(
-            name=data["name"],
-            kind=data.get("kind"),
-            source=PolicySource.from_dict(data["source"]) if "source" in data else None,
+        return _build_dataclass(
+            cls,
+            data,
+            converters={"source": PolicySource.from_dict},
         )
 
 
@@ -132,16 +144,17 @@ class IOSpec:
     outputs: list[TensorSpec]
 
     def to_dict(self) -> dict[str, Any]:
-        return {
-            "inputs": [t.to_dict() for t in self.inputs],
-            "outputs": [t.to_dict() for t in self.outputs],
-        }
+        return _dataclass_to_dict(self)
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> IOSpec:
-        return cls(
-            inputs=[TensorSpec.from_dict(t) for t in data["inputs"]],
-            outputs=[TensorSpec.from_dict(t) for t in data["outputs"]],
+        return _build_dataclass(
+            cls,
+            data,
+            converters={
+                "inputs": lambda items: [TensorSpec.from_dict(item) for item in items],
+                "outputs": lambda items: [TensorSpec.from_dict(item) for item in items],
+            },
         )
 
 
@@ -156,25 +169,11 @@ class ActionSpec:
     description: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
-        result = {
-            "dim": self.dim,
-            "chunk_size": self.chunk_size,
-            "n_action_steps": self.n_action_steps,
-            "representation": self.representation,
-        }
-        if self.description:
-            result["description"] = self.description
-        return result
+        return _dataclass_to_dict(self)
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> ActionSpec:
-        return cls(
-            dim=data["dim"],
-            chunk_size=data["chunk_size"],
-            n_action_steps=data["n_action_steps"],
-            representation=data.get("representation", "absolute"),
-            description=data.get("description"),
-        )
+        return _build_dataclass(cls, data)
 
 
 @dataclass
@@ -194,37 +193,23 @@ class IterativeConfig:
     clip_sample_range: float = 1.0
 
     def to_dict(self) -> dict[str, Any]:
-        result = {
-            "num_steps": self.num_steps,
-            "scheduler": self.scheduler,
-            "timestep_spacing": self.timestep_spacing,
-            "timestep_range": self.timestep_range,
-        }
-        if self.scheduler in ("ddpm", "ddim"):
-            result["num_train_timesteps"] = self.num_train_timesteps
-            result["beta_start"] = self.beta_start
-            result["beta_end"] = self.beta_end
-            result["beta_schedule"] = self.beta_schedule
-            result["prediction_type"] = self.prediction_type
-            result["clip_sample"] = self.clip_sample
-            result["clip_sample_range"] = self.clip_sample_range
+        result = _dataclass_to_dict(self)
+        if self.scheduler not in ("ddpm", "ddim"):
+            for key in (
+                "num_train_timesteps",
+                "beta_start",
+                "beta_end",
+                "beta_schedule",
+                "prediction_type",
+                "clip_sample",
+                "clip_sample_range",
+            ):
+                result.pop(key, None)
         return result
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> IterativeConfig:
-        return cls(
-            num_steps=data.get("num_steps", 10),
-            scheduler=data.get("scheduler", "euler"),
-            timestep_spacing=data.get("timestep_spacing", "linear"),
-            timestep_range=data.get("timestep_range", [1.0, 0.0]),
-            num_train_timesteps=data.get("num_train_timesteps", 1000),
-            beta_start=data.get("beta_start", 0.0001),
-            beta_end=data.get("beta_end", 0.02),
-            beta_schedule=data.get("beta_schedule", "squaredcos_cap_v2"),
-            prediction_type=data.get("prediction_type", "epsilon"),
-            clip_sample=data.get("clip_sample", True),
-            clip_sample_range=data.get("clip_sample_range", 1.0),
-        )
+        return _build_dataclass(cls, data)
 
 
 @dataclass
@@ -240,29 +225,11 @@ class TwoPhaseConfig:
     input_mapping: dict[str, str] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
-        result = {
-            "num_steps": self.num_steps,
-            "encoder_artifact": self.encoder_artifact,
-            "denoise_artifact": self.denoise_artifact,
-            "num_layers": self.num_layers,
-            "num_kv_heads": self.num_kv_heads,
-            "head_dim": self.head_dim,
-        }
-        if self.input_mapping:
-            result["input_mapping"] = self.input_mapping
-        return result
+        return _dataclass_to_dict(self)
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> TwoPhaseConfig:
-        return cls(
-            num_steps=data.get("num_steps", 10),
-            encoder_artifact=data.get("encoder_artifact", "onnx_encoder"),
-            denoise_artifact=data.get("denoise_artifact", "onnx_denoise"),
-            num_layers=data.get("num_layers", 18),
-            num_kv_heads=data.get("num_kv_heads", 8),
-            head_dim=data.get("head_dim", 256),
-            input_mapping=data.get("input_mapping", {}),
-        )
+        return _build_dataclass(cls, data)
 
 
 # Discriminated union type for inference configs
@@ -311,20 +278,14 @@ class NormalizationConfig:
     output_features: list[str]
 
     def to_dict(self) -> dict[str, Any]:
-        return {
-            "type": self.type.value,
-            "artifact": self.artifact,
-            "input_features": self.input_features,
-            "output_features": self.output_features,
-        }
+        return _dataclass_to_dict(self)
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> NormalizationConfig:
-        return cls(
-            type=NormalizationType(data["type"]),
-            artifact=data["artifact"],
-            input_features=data["input_features"],
-            output_features=data["output_features"],
+        return _build_dataclass(
+            cls,
+            data,
+            converters={"type": NormalizationType},
         )
 
 
@@ -339,23 +300,13 @@ class ExportMetadata:
     export_dtype: str = "float32"
 
     def to_dict(self) -> dict[str, Any]:
-        return {
-            "created_at": self.created_at or datetime.now(timezone.utc).isoformat(),
-            "created_by": self.created_by,
-            "lerobot_version": self.lerobot_version,
-            "export_device": self.export_device,
-            "export_dtype": self.export_dtype,
-        }
+        result = _dataclass_to_dict(self)
+        result.setdefault("created_at", datetime.now(timezone.utc).isoformat())
+        return result
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> ExportMetadata:
-        return cls(
-            created_at=data.get("created_at"),
-            created_by=data.get("created_by", "lerobot.export"),
-            lerobot_version=data.get("lerobot_version"),
-            export_device=data.get("export_device", "cpu"),
-            export_dtype=data.get("export_dtype", "float32"),
-        )
+        return _build_dataclass(cls, data)
 
 
 @dataclass
@@ -416,20 +367,9 @@ class Manifest:
 
     def to_dict(self) -> dict[str, Any]:
         """Convert manifest to a dictionary for JSON serialization."""
-        result = {
-            "format": self.format,
-            "version": self.version,
-            "policy": self.policy.to_dict(),
-            "artifacts": self.artifacts,
-            "io": self.io.to_dict(),
-            "action": self.action.to_dict(),
-        }
+        result = _dataclass_to_dict(self)
         if self.inference:
             result["inference"] = inference_config_to_dict(self.inference)
-        if self.normalization:
-            result["normalization"] = self.normalization.to_dict()
-        if self.metadata:
-            result["metadata"] = self.metadata.to_dict()
         return result
 
     @classmethod
@@ -439,18 +379,17 @@ class Manifest:
         if "inference" in data:
             inference = inference_config_from_dict(data["inference"])
 
-        return cls(
-            format=data.get("format", MANIFEST_FORMAT),
-            version=data.get("version", MANIFEST_VERSION),
-            policy=PolicyInfo.from_dict(data["policy"]),
-            artifacts=data["artifacts"],
-            io=IOSpec.from_dict(data["io"]),
-            action=ActionSpec.from_dict(data["action"]),
-            inference=inference,
-            normalization=NormalizationConfig.from_dict(data["normalization"])
-            if "normalization" in data
-            else None,
-            metadata=ExportMetadata.from_dict(data["metadata"]) if "metadata" in data else None,
+        return _build_dataclass(
+            cls,
+            data,
+            converters={
+                "policy": PolicyInfo.from_dict,
+                "io": IOSpec.from_dict,
+                "action": ActionSpec.from_dict,
+                "inference": lambda _: inference,
+                "normalization": NormalizationConfig.from_dict,
+                "metadata": ExportMetadata.from_dict,
+            },
         )
 
     def save(self, path: Path | str) -> None:
