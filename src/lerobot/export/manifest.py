@@ -37,8 +37,12 @@ def _serialize_value(value: Any) -> Any:
     if isinstance(value, Enum):
         return value.value
     if isinstance(value, list):
+        if not value:
+            return None
         return [_serialize_value(item) for item in value]
     if isinstance(value, dict):
+        if not value:
+            return None
         return {key: _serialize_value(val) for key, val in value.items() if val is not None}
     return value
 
@@ -49,7 +53,10 @@ def _dataclass_to_dict(instance: Any) -> dict[str, Any]:
         value = getattr(instance, field_info.name)
         if value is None:
             continue
-        result[field_info.name] = _serialize_value(value)
+        serialized = _serialize_value(value)
+        if serialized is None:
+            continue
+        result[field_info.name] = serialized
     return result
 
 
