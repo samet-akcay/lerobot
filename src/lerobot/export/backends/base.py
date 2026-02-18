@@ -18,7 +18,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TYPE_CHECKING, Protocol, cast, runtime_checkable
+from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 import numpy as np
 
@@ -81,11 +81,11 @@ def get_runtime_adapter(adapter_name: str, model_path: Path, device: str = "cpu"
     else:
         raise ValueError(f"Unsupported runtime adapter: {adapter_name}. Supported: onnx, openvino")
 
-    if TYPE_CHECKING:
-        adapter_checked = cast(RuntimeAdapter, adapter)
-    else:
-        if not isinstance(adapter, RuntimeAdapter):
-            raise TypeError(f"Runtime adapter '{adapter_name}' must implement the RuntimeAdapter protocol.")
-        adapter_checked = adapter
+    return _ensure_runtime_adapter(adapter, adapter_name)
 
-    return adapter_checked
+
+def _ensure_runtime_adapter(adapter: object, adapter_name: str) -> RuntimeAdapter:
+    if not isinstance(adapter, RuntimeAdapter):
+        raise TypeError(f"Runtime adapter '{adapter_name}' must implement the RuntimeAdapter protocol.")
+
+    return adapter
