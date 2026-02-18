@@ -18,7 +18,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING, Protocol, cast, runtime_checkable
 
 import numpy as np
 
@@ -26,6 +26,7 @@ if TYPE_CHECKING:
     from numpy.typing import NDArray
 
 
+@runtime_checkable
 class RuntimeAdapter(Protocol):
     """Minimal interface for model execution.
 
@@ -72,10 +73,19 @@ def get_runtime_adapter(adapter_name: str, model_path: Path, device: str = "cpu"
     if adapter_name == "onnx":
         from .onnx import ONNXRuntimeAdapter
 
-        return ONNXRuntimeAdapter(model_path, device)
+        adapter: object = ONNXRuntimeAdapter(model_path, device)
     elif adapter_name == "openvino":
         from .openvino import OpenVINORuntimeAdapter
 
-        return OpenVINORuntimeAdapter(model_path, device)
+        adapter = OpenVINORuntimeAdapter(model_path, device)
     else:
         raise ValueError(f"Unsupported runtime adapter: {adapter_name}. Supported: onnx, openvino")
+
+    if TYPE_CHECKING:
+        adapter_checked = cast(RuntimeAdapter, adapter)
+    else:
+        if not isinstance(adapter, RuntimeAdapter):
+            raise TypeError(f"Runtime adapter '{adapter_name}' must implement the RuntimeAdapter protocol.")
+        adapter_checked = adapter
+
+    return adapter_checked
