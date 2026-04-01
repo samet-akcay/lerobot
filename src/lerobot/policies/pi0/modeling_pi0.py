@@ -134,10 +134,12 @@ def make_att_2d_masks(pad_masks, att_masks):  # see openpi `make_att_2d_masks` (
     if pad_masks.ndim != 2:
         raise ValueError(pad_masks.ndim)
 
-    cumsum = torch.cumsum(att_masks, dim=1)
+    # Cast to int64 before cumsum for ONNX compatibility (CumSum doesn't accept bool)
+    cumsum = torch.cumsum(att_masks.to(torch.int64), dim=1)
     att_2d_masks = cumsum[:, None, :] <= cumsum[:, :, None]
-    pad_2d_masks = pad_masks[:, None, :] * pad_masks[:, :, None]
-    return att_2d_masks & pad_2d_masks
+    pad_masks_int = pad_masks.to(torch.int64)
+    pad_2d_masks = pad_masks_int[:, None, :] * pad_masks_int[:, :, None]
+    return att_2d_masks & pad_2d_masks.bool()
 
 
 def pad_vector(vector, new_dim):
@@ -443,7 +445,8 @@ class PaliGemmaWithExpertModel(
         if image.dtype != torch.float32:
             image = image.to(torch.float32)
         image_outputs = self.paligemma.model.get_image_features(image)
-        features = image_outputs.pooler_output * self.paligemma.config.text_config.hidden_size**0.5
+        features = image_outputs.pooler_output if hasattr(image_outputs, "pooler_output") else image_outputs
+        features = features * self.paligemma.config.text_config.hidden_size**0.5
         if features.dtype != out_dtype:
             features = features.to(out_dtype)
         return features
@@ -931,6 +934,168 @@ class PI0Pytorch(nn.Module):  # see openpi `PI0Pytorch`
         return self.action_out_proj(suffix_out)
 
 
+# ---------------------------------------------------------------------------
+# Export wrappers: ExportableTwoPhase protocol
+# ---------------------------------------------------------------------------
+
+
+class PI0EncoderModule(nn.Module):
+    """ONNX-exportable encoder for the PI0 two-phase pipeline.
+
+    Wraps embed_prefix() + VLM forward with use_cache=True, flattening
+    the KV cache into individual tensors for ONNX output.
+
+    Inputs:
+        (image_0, ..., img_mask_0, ..., lang_tokens, lang_masks, state)
+    Outputs:
+        (prefix_pad_mask, past_key_0, past_value_0, past_key_1, ...)
+    """
+
+    def __init__(self, pi0_model: PI0Pytorch, num_images: int = 1):
+        super().__init__()
+        self.pi0_model = pi0_model
+        self.num_images = num_images
+        config = pi0_model.config
+        self.num_layers = get_gemma_config(config.paligemma_variant).depth
+
+    def forward(self, *args):
+        # Unpack flattened inputs: images, img_masks, lang_tokens, lang_masks, state
+        n = self.num_images
+        images = list(args[:n])
+        # ONNX passes masks as float; internal PI0 code needs bool for bitwise ops
+        img_masks = [m > 0.5 for m in args[n : 2 * n]]
+        lang_tokens = args[2 * n]
+        lang_masks = args[2 * n + 1] > 0.5
+        # state is passed but not used by encoder (used in denoise phase)
+
+        prefix_embs, prefix_pad_masks, prefix_att_masks = self.pi0_model.embed_prefix(
+            images, img_masks, lang_tokens, lang_masks
+        )
+        prefix_att_2d_masks = make_att_2d_masks(prefix_pad_masks, prefix_att_masks)
+        prefix_position_ids = torch.cumsum(prefix_pad_masks.to(torch.int64), dim=1) - 1
+
+        att_2d_masks_4d = self.pi0_model._prepare_attention_masks_4d(prefix_att_2d_masks)
+        self.pi0_model.paligemma_with_expert.paligemma.model.language_model.config._attn_implementation = (
+            "eager"
+        )
+
+        _, past_key_values = self.pi0_model.paligemma_with_expert.forward(
+            attention_mask=att_2d_masks_4d,
+            position_ids=prefix_position_ids,
+            past_key_values=None,
+            inputs_embeds=[prefix_embs, None],
+            use_cache=True,
+        )
+
+        # Flatten KV cache: past_key_values is a DynamicCache with .key_cache / .value_cache
+        outputs = [prefix_pad_masks.float()]
+        for layer_idx in range(self.num_layers):
+            outputs.append(past_key_values.key_cache[layer_idx].float())
+            outputs.append(past_key_values.value_cache[layer_idx].float())
+
+        return tuple(outputs)
+
+
+class PI0DenoiseModule(nn.Module):
+    """ONNX-exportable single denoise step for PI0.
+
+    Wraps embed_suffix() + expert forward with KV cache → action_out_proj.
+    Manually iterates through expert layers to avoid non-traceable DynamicCache.
+
+    Inputs:
+        (state, x_t, timestep, prefix_pad_mask, past_key_0, past_value_0, ...)
+    Outputs:
+        v_t [B, chunk_size, action_dim]
+    """
+
+    def __init__(self, pi0_model: PI0Pytorch):
+        super().__init__()
+        self.pi0_model = pi0_model
+        config = pi0_model.config
+        self.num_layers = get_gemma_config(config.paligemma_variant).depth
+        self.chunk_size = config.chunk_size
+
+    def forward(self, state, x_t, timestep, prefix_pad_mask, *kv_args):
+        prefix_pad_masks = prefix_pad_mask > 0.5
+
+        suffix_embs, suffix_pad_masks, suffix_att_masks, adarms_cond = self.pi0_model.embed_suffix(
+            state, x_t, timestep
+        )
+
+        suffix_len = suffix_pad_masks.shape[1]
+        batch_size = prefix_pad_masks.shape[0]
+        prefix_len = prefix_pad_masks.shape[1]
+
+        prefix_pad_2d_masks = prefix_pad_masks[:, None, :].expand(batch_size, suffix_len, prefix_len)
+        suffix_att_2d_masks = make_att_2d_masks(suffix_pad_masks, suffix_att_masks)
+        full_att_2d_masks = torch.cat([prefix_pad_2d_masks, suffix_att_2d_masks], dim=2)
+
+        prefix_offsets = torch.sum(prefix_pad_masks.to(torch.int64), dim=-1)[:, None]
+        position_ids = prefix_offsets + torch.cumsum(suffix_pad_masks.to(torch.int64), dim=1) - 1
+
+        full_att_2d_masks_4d = self.pi0_model._prepare_attention_masks_4d(full_att_2d_masks)
+
+        expert_model = self.pi0_model.paligemma_with_expert.gemma_expert.model
+        expert_model.config._attn_implementation = "eager"
+
+        hidden_states = suffix_embs
+        if (
+            len(expert_model.layers) > 0
+            and expert_model.layers[0].self_attn.q_proj.weight.dtype == torch.bfloat16
+        ):
+            hidden_states = hidden_states.to(torch.bfloat16)
+
+        position_embeddings = expert_model.rotary_emb(hidden_states, position_ids)
+
+        for layer_idx in range(self.num_layers):
+            layer = expert_model.layers[layer_idx]
+            past_key = kv_args[2 * layer_idx]
+            past_value = kv_args[2 * layer_idx + 1]
+
+            residual = hidden_states
+            hidden_states, gate = layer.input_layernorm(hidden_states, cond=adarms_cond)
+
+            input_shape = hidden_states.shape[:-1]
+            hidden_shape = (*input_shape, -1, layer.self_attn.head_dim)
+
+            query_states = layer.self_attn.q_proj(hidden_states).view(hidden_shape).transpose(1, 2)
+            key_states = layer.self_attn.k_proj(hidden_states).view(hidden_shape).transpose(1, 2)
+            value_states = layer.self_attn.v_proj(hidden_states).view(hidden_shape).transpose(1, 2)
+
+            cos, sin = position_embeddings
+            from transformers.models.gemma.modeling_gemma import apply_rotary_pos_emb, eager_attention_forward
+
+            query_states, key_states = apply_rotary_pos_emb(query_states, key_states, cos, sin)
+
+            key_states = torch.cat([past_key, key_states], dim=2)
+            value_states = torch.cat([past_value, value_states], dim=2)
+
+            attn_output, _ = eager_attention_forward(
+                layer.self_attn,
+                query_states,
+                key_states,
+                value_states,
+                full_att_2d_masks_4d,
+                dropout=0.0,
+                scaling=layer.self_attn.scaling,
+            )
+            attn_output = attn_output.reshape(*input_shape, -1).contiguous()
+            hidden_states = layer.self_attn.o_proj(attn_output)
+
+            hidden_states = _gated_residual(residual, hidden_states, gate)
+
+            residual = hidden_states
+            hidden_states, gate = layer.post_attention_layernorm(hidden_states, cond=adarms_cond)
+            hidden_states = layer.mlp(hidden_states)
+            hidden_states = _gated_residual(residual, hidden_states, gate)
+
+        hidden_states, _ = expert_model.norm(hidden_states, adarms_cond)
+
+        suffix_out = hidden_states[:, -self.chunk_size :]
+        suffix_out = suffix_out.to(dtype=torch.float32)
+        return self.pi0_model.action_out_proj(suffix_out)
+
+
 class PI0Policy(PreTrainedPolicy):
     """PI0 OpenPI Policy for LeRobot."""
 
@@ -961,6 +1126,112 @@ class PI0Policy(PreTrainedPolicy):
         self.model.to(config.device)
 
         self.reset()
+
+    # ------------------------------------------------------------------
+    # Export protocol: ExportableTwoPhase
+    # ------------------------------------------------------------------
+
+    def get_inference_type(self) -> str:
+        return "two_phase"
+
+    def get_two_phase_export_config(self):
+        from lerobot.export.protocols import TwoPhaseExportConfig
+
+        gemma_cfg = get_gemma_config(self.config.paligemma_variant)
+        return TwoPhaseExportConfig(
+            num_layers=gemma_cfg.depth,
+            num_kv_heads=gemma_cfg.num_kv_heads,
+            head_dim=gemma_cfg.head_dim,
+            chunk_size=self.config.chunk_size,
+            action_dim=self.config.max_action_dim,
+            state_dim=self.config.max_state_dim,
+            num_steps=self.config.num_inference_steps,
+            state_in_denoise=True,
+        )
+
+    def get_encoder_module(self, num_images: int = 1) -> nn.Module:
+        module = PI0EncoderModule(self.model, num_images=num_images)
+        module.eval()
+        return module
+
+    def get_denoise_module(self) -> nn.Module:
+        module = PI0DenoiseModule(self.model)
+        module.eval()
+        return module
+
+    def prepare_encoder_inputs(
+        self,
+        example_batch: dict[str, Tensor],
+    ) -> tuple[tuple[Tensor, ...], list[str], int, dict[str, str]]:
+        device = next(self.parameters()).device
+        images, img_masks = self._preprocess_images(example_batch)
+        lang_tokens = example_batch[OBS_LANGUAGE_TOKENS]
+        lang_masks = example_batch[OBS_LANGUAGE_ATTENTION_MASK]
+        state = self.prepare_state(example_batch)
+
+        num_images = len(images)
+        input_mapping: dict[str, str] = {}
+
+        tensors: list[Tensor] = []
+        names: list[str] = []
+
+        for i, img in enumerate(images):
+            tensors.append(img.to(device))
+            name = f"image_{i}"
+            names.append(name)
+            img_key = (
+                list(self.config.image_features.keys())[i]
+                if i < len(self.config.image_features)
+                else f"observation.images.{i}"
+            )
+            input_mapping[img_key] = name
+
+        for i, mask in enumerate(img_masks):
+            tensors.append(mask.float().to(device))
+            names.append(f"img_mask_{i}")
+
+        tensors.append(lang_tokens.to(device))
+        names.append("lang_tokens")
+        input_mapping[OBS_LANGUAGE_TOKENS] = "lang_tokens"
+
+        tensors.append(lang_masks.float().to(device))
+        names.append("lang_masks")
+        input_mapping[OBS_LANGUAGE_ATTENTION_MASK] = "lang_masks"
+
+        tensors.append(state.to(device))
+        names.append("state")
+        input_mapping[OBS_STATE] = "state"
+
+        return tuple(tensors), names, num_images, input_mapping
+
+    def prepare_denoise_inputs(
+        self,
+        prefix_len: int,
+        device,
+    ) -> tuple[tuple[Tensor, ...], list[str]]:
+        batch_size = 1
+        gemma_cfg = get_gemma_config(self.config.paligemma_variant)
+        num_layers = gemma_cfg.depth
+        num_kv_heads = gemma_cfg.num_kv_heads
+        head_dim = gemma_cfg.head_dim
+
+        state = torch.randn(batch_size, self.config.max_state_dim, device=device)
+        x_t = torch.randn(batch_size, self.config.chunk_size, self.config.max_action_dim, device=device)
+        timestep = torch.ones(batch_size, device=device)
+        prefix_pad_mask = torch.ones(batch_size, prefix_len, device=device)
+
+        tensors: list[Tensor] = [state, x_t, timestep, prefix_pad_mask]
+        names: list[str] = ["state", "x_t", "timestep", "prefix_pad_mask"]
+
+        for layer_idx in range(num_layers):
+            k = torch.randn(batch_size, num_kv_heads, prefix_len, head_dim, device=device)
+            v = torch.randn(batch_size, num_kv_heads, prefix_len, head_dim, device=device)
+            tensors.append(k)
+            names.append(f"past_key_{layer_idx}")
+            tensors.append(v)
+            names.append(f"past_value_{layer_idx}")
+
+        return tuple(tensors), names
 
     @classmethod
     def from_pretrained(

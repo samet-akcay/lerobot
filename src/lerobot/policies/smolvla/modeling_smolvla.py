@@ -63,7 +63,7 @@ from torch import Tensor, nn
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.policies.rtc.modeling_rtc import RTCProcessor
 from lerobot.policies.smolvla.configuration_smolvla import SmolVLAConfig
-from lerobot.policies.smolvla.smolvlm_with_expert import SmolVLMWithExpertModel
+from lerobot.policies.smolvla.smolvlm_with_expert import SmolVLMWithExpertModel, apply_rope
 from lerobot.policies.utils import (
     populate_queues,
 )
@@ -124,7 +124,7 @@ def make_att_2d_masks(pad_masks, att_masks):
     if pad_masks.ndim != 2:
         raise ValueError(pad_masks.ndim)
 
-    cumsum = torch.cumsum(att_masks, dim=1)
+    cumsum = torch.cumsum(att_masks.to(torch.int64), dim=1)
     att_2d_masks = cumsum[:, None, :] <= cumsum[:, :, None]
     pad_2d_masks = pad_masks[:, None, :] * pad_masks[:, :, None]
     att_2d_masks = att_2d_masks & pad_2d_masks
@@ -244,6 +244,107 @@ class SmolVLAPolicy(PreTrainedPolicy):
         self.init_rtc_processor()
         self.model = VLAFlowMatching(config, rtc_processor=self.rtc_processor)
         self.reset()
+
+    def get_inference_type(self) -> str:
+        return "two_phase"
+
+    def get_two_phase_export_config(self):
+        from lerobot.export.protocols import TwoPhaseExportConfig
+
+        vlm_config = self.model.vlm_with_expert.vlm.config.text_config
+        return TwoPhaseExportConfig(
+            num_layers=self.model.vlm_with_expert.num_vlm_layers,
+            num_kv_heads=vlm_config.num_key_value_heads,
+            head_dim=vlm_config.head_dim,
+            chunk_size=self.config.chunk_size,
+            action_dim=self.config.max_action_dim,
+            state_dim=self.config.max_state_dim,
+            num_steps=self.config.num_steps,
+            state_in_denoise=False,
+        )
+
+    def get_encoder_module(self, num_images: int = 1) -> nn.Module:
+        module = SmolVLAEncoderModule(self.model, num_images=num_images)
+        module.eval()
+        return module
+
+    def get_denoise_module(self) -> nn.Module:
+        module = SmolVLADenoiseModule(self.model)
+        module.eval()
+        return module
+
+    def prepare_encoder_inputs(
+        self,
+        example_batch: dict[str, Tensor],
+    ) -> tuple[tuple[Tensor, ...], list[str], int, dict[str, str]]:
+        device = next(self.parameters()).device
+        images, img_masks = self.prepare_images(example_batch)
+        lang_tokens = example_batch[OBS_LANGUAGE_TOKENS]
+        lang_masks = example_batch[OBS_LANGUAGE_ATTENTION_MASK]
+        state = self.prepare_state(example_batch)
+
+        num_images = len(images)
+        input_mapping: dict[str, str] = {}
+
+        tensors: list[Tensor] = []
+        names: list[str] = []
+
+        for i, img in enumerate(images):
+            tensors.append(img.to(device))
+            name = f"image_{i}"
+            names.append(name)
+            img_key = (
+                list(self.config.image_features.keys())[i]
+                if i < len(self.config.image_features)
+                else f"observation.images.{i}"
+            )
+            input_mapping[img_key] = name
+
+        for i, mask in enumerate(img_masks):
+            tensors.append(mask.float().to(device))
+            names.append(f"img_mask_{i}")
+
+        tensors.append(lang_tokens.to(device))
+        names.append("lang_tokens")
+        input_mapping[OBS_LANGUAGE_TOKENS] = "lang_tokens"
+
+        tensors.append(lang_masks.float().to(device))
+        names.append("lang_masks")
+        input_mapping[OBS_LANGUAGE_ATTENTION_MASK] = "lang_masks"
+
+        tensors.append(state.to(device))
+        names.append("state")
+        input_mapping[OBS_STATE] = "state"
+
+        return tuple(tensors), names, num_images, input_mapping
+
+    def prepare_denoise_inputs(
+        self,
+        prefix_len: int,
+        device,
+    ) -> tuple[tuple[Tensor, ...], list[str]]:
+        batch_size = 1
+        vlm_config = self.model.vlm_with_expert.vlm.config.text_config
+        num_layers = self.model.vlm_with_expert.num_vlm_layers
+        num_kv_heads = vlm_config.num_key_value_heads
+        head_dim = vlm_config.head_dim
+
+        x_t = torch.randn(batch_size, self.config.chunk_size, self.config.max_action_dim, device=device)
+        timestep = torch.ones(batch_size, device=device)
+        prefix_pad_mask = torch.ones(batch_size, prefix_len, device=device)
+
+        tensors: list[Tensor] = [x_t, timestep, prefix_pad_mask]
+        names: list[str] = ["x_t", "timestep", "prefix_pad_mask"]
+
+        for layer_idx in range(num_layers):
+            k = torch.randn(batch_size, prefix_len, num_kv_heads, head_dim, device=device)
+            v = torch.randn(batch_size, prefix_len, num_kv_heads, head_dim, device=device)
+            tensors.append(k)
+            names.append(f"past_key_{layer_idx}")
+            tensors.append(v)
+            names.append(f"past_value_{layer_idx}")
+
+        return tuple(tensors), names
 
     def reset(self):
         """This should be called whenever the environment is reset."""
@@ -903,3 +1004,149 @@ class VLAFlowMatching(nn.Module):
         suffix_out = suffix_out.to(dtype=torch.float32)
         v_t = self.action_out_proj(suffix_out)
         return v_t
+
+
+class SmolVLAEncoderModule(nn.Module):
+    def __init__(self, smolvla_model: VLAFlowMatching, num_images: int = 1):
+        super().__init__()
+        self.smolvla_model = smolvla_model
+        self.num_images = num_images
+        self.num_vlm_layers = smolvla_model.vlm_with_expert.num_vlm_layers
+
+    def forward(self, *args):
+        n = self.num_images
+        images = list(args[:n])
+        img_masks = [m > 0.5 for m in args[n : 2 * n]]
+        lang_tokens = args[2 * n]
+        lang_masks = args[2 * n + 1] > 0.5
+        state = args[2 * n + 2]
+
+        prefix_embs, prefix_pad_masks, prefix_att_masks = self.smolvla_model.embed_prefix(
+            images, img_masks, lang_tokens, lang_masks, state=state
+        )
+        prefix_att_2d_masks = make_att_2d_masks(prefix_pad_masks, prefix_att_masks)
+        prefix_position_ids = torch.cumsum(prefix_pad_masks.to(torch.int64), dim=1) - 1
+
+        _, past_key_values = self.smolvla_model.vlm_with_expert.forward(
+            attention_mask=prefix_att_2d_masks,
+            position_ids=prefix_position_ids,
+            past_key_values=None,
+            inputs_embeds=[prefix_embs, None],
+            use_cache=True,
+            fill_kv_cache=True,
+        )
+
+        outputs = [prefix_pad_masks.float()]
+        for layer_idx in range(self.num_vlm_layers):
+            outputs.append(past_key_values[layer_idx]["key_states"].float())
+            outputs.append(past_key_values[layer_idx]["value_states"].float())
+        return tuple(outputs)
+
+
+class SmolVLADenoiseModule(nn.Module):
+    def __init__(self, smolvla_model: VLAFlowMatching):
+        super().__init__()
+        self.smolvla_model = smolvla_model
+        self.num_vlm_layers = smolvla_model.vlm_with_expert.num_vlm_layers
+        self.chunk_size = smolvla_model.config.chunk_size
+        self.self_attn_every_n_layers = smolvla_model.vlm_with_expert.self_attn_every_n_layers
+        self.attention_mode = smolvla_model.vlm_with_expert.attention_mode
+
+    def forward(self, x_t, timestep, prefix_pad_mask, *kv_args):
+        prefix_pad_masks = prefix_pad_mask > 0.5
+
+        suffix_embs, suffix_pad_masks, suffix_att_masks = self.smolvla_model.embed_suffix(x_t, timestep)
+
+        suffix_len = suffix_pad_masks.shape[1]
+        batch_size = prefix_pad_masks.shape[0]
+        prefix_len = prefix_pad_masks.shape[1]
+
+        prefix_pad_2d_masks = prefix_pad_masks[:, None, :].expand(batch_size, suffix_len, prefix_len)
+        suffix_att_2d_masks = make_att_2d_masks(suffix_pad_masks, suffix_att_masks)
+        full_att_2d_masks = torch.cat([prefix_pad_2d_masks, suffix_att_2d_masks], dim=2)
+
+        prefix_offsets = torch.sum(prefix_pad_masks.to(torch.int64), dim=-1)[:, None]
+        position_ids = prefix_offsets + torch.cumsum(suffix_pad_masks.to(torch.int64), dim=1) - 1
+
+        vlm_with_expert = self.smolvla_model.vlm_with_expert
+        models = [vlm_with_expert.get_vlm_model().text_model, vlm_with_expert.lm_expert]
+        model_layers = vlm_with_expert.get_model_layers(models)
+        head_dim = vlm_with_expert.vlm.config.text_config.head_dim
+        attention_interface = vlm_with_expert.get_attention_interface()
+
+        hidden_states = suffix_embs
+
+        for layer_idx in range(self.num_vlm_layers):
+            past_key = kv_args[2 * layer_idx]
+            past_value = kv_args[2 * layer_idx + 1]
+
+            is_self_attn = "cross" not in self.attention_mode or (
+                self.self_attn_every_n_layers > 0 and layer_idx % self.self_attn_every_n_layers == 0
+            )
+
+            expert_layer = model_layers[1][layer_idx]
+            if expert_layer is None:
+                continue
+
+            residual = hidden_states
+            expert_hidden_states = expert_layer.input_layernorm(hidden_states)
+            input_shape = expert_hidden_states.shape[:-1]
+            hidden_shape = (*input_shape, -1, expert_layer.self_attn.head_dim)
+            expert_hidden_states = expert_hidden_states.to(dtype=expert_layer.self_attn.q_proj.weight.dtype)
+
+            query_states = expert_layer.self_attn.q_proj(expert_hidden_states).view(hidden_shape)
+
+            if is_self_attn:
+                key_states = expert_layer.self_attn.k_proj(expert_hidden_states).view(hidden_shape)
+                value_states = expert_layer.self_attn.v_proj(expert_hidden_states).view(hidden_shape)
+
+                query_states = apply_rope(query_states, position_ids)
+                key_states = apply_rope(key_states, position_ids)
+
+                key_states = torch.cat([past_key, key_states], dim=1)
+                value_states = torch.cat([past_value, value_states], dim=1)
+                attention_mask = full_att_2d_masks
+            else:
+                flat_key = past_key.to(dtype=expert_layer.self_attn.k_proj.weight.dtype).view(
+                    *past_key.shape[:2], -1
+                )
+                key_states = expert_layer.self_attn.k_proj(flat_key).view(
+                    *flat_key.shape[:-1], -1, expert_layer.self_attn.head_dim
+                )
+
+                flat_value = past_value.to(dtype=expert_layer.self_attn.v_proj.weight.dtype).view(
+                    *past_value.shape[:2], -1
+                )
+                value_states = expert_layer.self_attn.v_proj(flat_value).view(
+                    *flat_value.shape[:-1], -1, expert_layer.self_attn.head_dim
+                )
+
+                expert_position_ids = position_ids - torch.min(position_ids, dim=1, keepdim=True).values
+                query_states = apply_rope(query_states, expert_position_ids)
+                attention_mask = full_att_2d_masks[:, -suffix_len:, : key_states.shape[1]]
+
+            att_output = attention_interface(
+                attention_mask,
+                batch_size,
+                head_dim,
+                query_states,
+                key_states,
+                value_states,
+            )
+
+            if att_output.dtype != expert_layer.self_attn.o_proj.weight.dtype:
+                att_output = att_output.to(expert_layer.self_attn.o_proj.weight.dtype)
+
+            hidden_states = expert_layer.self_attn.o_proj(att_output)
+            hidden_states = hidden_states + residual
+
+            residual = hidden_states
+            hidden_states = expert_layer.post_attention_layernorm(hidden_states)
+            hidden_states = expert_layer.mlp(hidden_states)
+            hidden_states = hidden_states + residual
+
+        hidden_states = models[1].norm(hidden_states)
+
+        suffix_out = hidden_states[:, -self.chunk_size :]
+        suffix_out = suffix_out.to(dtype=torch.float32)
+        return self.smolvla_model.action_out_proj(suffix_out)
