@@ -39,6 +39,30 @@ from ..pretrained import PreTrainedPolicy
 from .configuration_act import ACTConfig
 
 
+class ACTForwardModule(nn.Module):
+    """Wrapper around ACT model for ONNX export.
+
+    Accepts flat observation tensors as positional args and returns
+    the action chunk tensor of shape ``(B, chunk_size, action_dim)``.
+    """
+
+    def __init__(self, policy: "ACTPolicy", input_keys: list[str]) -> None:
+        super().__init__()
+        self.model = policy.model
+        self.config = policy.config
+        self._input_keys = input_keys
+        self._image_keys = [k for k in input_keys if k in (policy.config.image_features or {})]
+
+    def forward(self, *args: Tensor) -> Tensor:
+        batch: dict[str, Tensor] = dict(zip(self._input_keys, args, strict=True))
+
+        if self._image_keys:
+            batch[OBS_IMAGES] = [batch[k] for k in self._image_keys]
+
+        actions, _ = self.model(batch)
+        return actions
+
+
 class ACTPolicy(PreTrainedPolicy):
     """
     Action Chunking Transformer Policy as per Learning Fine-Grained Bimanual Manipulation with Low-Cost
@@ -68,6 +92,47 @@ class ACTPolicy(PreTrainedPolicy):
             self.temporal_ensembler = ACTTemporalEnsembler(config.temporal_ensemble_coeff, config.chunk_size)
 
         self.reset()
+
+    # ------------------------------------------------------------------
+    # Export protocol: ExportableSinglePhase
+    # ------------------------------------------------------------------
+
+    def get_inference_type(self) -> str:
+        return "action_chunking"
+
+    def get_single_phase_export_config(self):
+        from lerobot.export.protocols import SinglePhaseExportConfig
+
+        return SinglePhaseExportConfig(
+            chunk_size=self.config.chunk_size,
+            action_dim=self.config.action_feature.shape[0],
+            n_action_steps=self.config.n_action_steps,
+        )
+
+    def get_forward_module(self) -> nn.Module:
+        input_keys = list(self._export_input_keys())
+        module = ACTForwardModule(self, input_keys)
+        module.eval()
+        return module
+
+    def prepare_forward_inputs(
+        self,
+        example_batch: dict[str, Tensor],
+    ) -> tuple[tuple[Tensor, ...], list[str], list[str]]:
+        input_keys = list(self._export_input_keys())
+        input_tensors = tuple(example_batch[k] for k in input_keys)
+        output_names = ["action"]
+        return input_tensors, input_keys, output_names
+
+    def _export_input_keys(self):
+        keys: list[str] = []
+        if self.config.robot_state_feature:
+            keys.append(OBS_STATE)
+        if self.config.env_state_feature:
+            keys.append(OBS_ENV_STATE)
+        if self.config.image_features:
+            keys.extend(self.config.image_features)
+        return keys
 
     def get_optim_params(self) -> dict:
         # TODO(aliberts, rcadene): As of now, lr_backbone == lr
