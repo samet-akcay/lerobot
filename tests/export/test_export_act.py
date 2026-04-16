@@ -34,12 +34,9 @@ from tests.export.conftest import (  # noqa: E402
 class TestACTExport:
     @pytest.mark.slow
     def test_export_creates_valid_package(self, tmp_path: Path):
-        from lerobot.export import export_policy
-
         policy, batch = create_act_policy_and_batch()
 
-        package_path = export_policy(
-            policy,
+        package_path = policy.export(
             tmp_path / "act_package",
             backend="onnx",
             example_batch=batch,
@@ -50,18 +47,17 @@ class TestACTExport:
 
     @pytest.mark.slow
     def test_onnx_forward_pass(self, tmp_path: Path):
-        from lerobot.export import export_policy, load_exported_policy
+        from lerobot.export import ExportedPolicy, load_exported_policy
 
         policy, batch = create_act_policy_and_batch()
 
-        package_path = export_policy(
-            policy,
+        package_path = policy.to_onnx(
             tmp_path / "act_package",
-            backend="onnx",
             example_batch=batch,
         )
 
         runtime = load_exported_policy(package_path, backend="onnx", device="cpu")
+        assert isinstance(runtime, ExportedPolicy)
 
         obs_numpy = to_numpy(batch)
         action_chunk = runtime.predict_action_chunk(obs_numpy)
@@ -73,7 +69,7 @@ class TestACTExport:
 
     @pytest.mark.slow
     def test_onnx_numerical_parity(self, tmp_path: Path):
-        from lerobot.export import export_policy, load_exported_policy
+        from lerobot.export import load_exported_policy
 
         policy, batch = create_act_policy_and_batch()
 
@@ -81,10 +77,8 @@ class TestACTExport:
             torch.manual_seed(42)
             pytorch_output = policy.predict_action_chunk(batch)
 
-        package_path = export_policy(
-            policy,
+        package_path = policy.to_onnx(
             tmp_path / "act_package",
-            backend="onnx",
             example_batch=batch,
             include_normalization=False,
         )
@@ -106,25 +100,21 @@ class TestACTExport:
         )
 
     @pytest.mark.slow
-    def test_action_chunking_wrapper(self, tmp_path: Path):
-        from lerobot.export import export_policy, load_exported_policy
-        from lerobot.export.runner import ActionChunkingWrapper
+    def test_select_action_is_default_api(self, tmp_path: Path):
+        from lerobot.export import load_exported_policy
 
         policy, batch = create_act_policy_and_batch()
 
-        package_path = export_policy(
-            policy,
+        package_path = policy.to_onnx(
             tmp_path / "act_package",
-            backend="onnx",
             example_batch=batch,
         )
 
-        runtime = load_exported_policy(package_path, backend="onnx", device="cpu")
-        wrapper = ActionChunkingWrapper(runtime)
+        exported_policy = load_exported_policy(package_path, backend="onnx", device="cpu")
 
         obs_numpy = to_numpy(batch)
-        wrapper.reset()
-        action = wrapper.select_action(obs_numpy)
+        exported_policy.reset()
+        action = exported_policy.select_action(obs_numpy)
 
         assert action.ndim == 1
         action_dim = policy.config.action_feature.shape[0] if policy.config.action_feature else 6
@@ -217,38 +207,28 @@ class TestACTBackends:
 
 class TestACTRuntime:
     @pytest.mark.slow
-    def test_create_runner_returns_single_pass(self, tmp_path: Path):
-        from lerobot.export import export_policy
-        from lerobot.export.runner import SinglePassRunner, create_runner
+    def test_from_exported_loads_user_facing_policy(self, tmp_path: Path):
+        from lerobot.export import ExportedPolicy
 
         policy, batch = create_act_policy_and_batch()
 
-        package_path = export_policy(
-            policy,
+        package_path = policy.to_onnx(
             tmp_path / "act_package",
-            backend="onnx",
             example_batch=batch,
         )
 
-        runtime = create_runner(package_path, backend="onnx", device="cpu")
+        runtime = policy.from_exported(package_path, backend="onnx", device="cpu")
 
-        assert isinstance(runtime, SinglePassRunner)
+        assert isinstance(runtime, ExportedPolicy)
 
 
 class TestACTExecuTorch:
     @require_executorch
     @pytest.mark.slow
     def test_executorch_export_creates_valid_package(self, tmp_path: Path):
-        from lerobot.export import export_policy
-
         policy, batch = create_act_policy_and_batch()
 
-        package_path = export_policy(
-            policy,
-            tmp_path / "act_et",
-            backend="executorch",
-            example_batch=batch,
-        )
+        package_path = policy.to_executorch(tmp_path / "act_et", example_batch=batch)
 
         assert (package_path / "manifest.json").exists()
         assert (package_path / "artifacts" / "model.pte").exists()
@@ -257,16 +237,11 @@ class TestACTExecuTorch:
     @require_executorch
     @pytest.mark.slow
     def test_executorch_forward_pass(self, tmp_path: Path):
-        from lerobot.export import export_policy, load_exported_policy
+        from lerobot.export import load_exported_policy
 
         policy, batch = create_act_policy_and_batch()
 
-        package_path = export_policy(
-            policy,
-            tmp_path / "act_et",
-            backend="executorch",
-            example_batch=batch,
-        )
+        package_path = policy.to_executorch(tmp_path / "act_et", example_batch=batch)
 
         runtime = load_exported_policy(package_path, backend="executorch", device="cpu")
         obs_numpy = to_numpy(batch)
@@ -280,7 +255,7 @@ class TestACTExecuTorch:
     @require_executorch
     @pytest.mark.slow
     def test_executorch_numerical_parity_with_pytorch(self, tmp_path: Path):
-        from lerobot.export import export_policy, load_exported_policy
+        from lerobot.export import load_exported_policy
 
         policy, batch = create_act_policy_and_batch()
 
@@ -288,10 +263,8 @@ class TestACTExecuTorch:
             torch.manual_seed(42)
             pytorch_output = policy.predict_action_chunk(batch)
 
-        package_path = export_policy(
-            policy,
+        package_path = policy.to_executorch(
             tmp_path / "act_et",
-            backend="executorch",
             example_batch=batch,
             include_normalization=False,
         )

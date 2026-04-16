@@ -36,12 +36,9 @@ from tests.export.conftest import (  # noqa: E402
 class TestDiffusionExport:
     @pytest.mark.slow
     def test_export_creates_valid_package(self, tmp_path: Path):
-        from lerobot.export import export_policy
-
         policy, batch = create_diffusion_policy_and_batch()
 
-        package_path = export_policy(
-            policy,
+        package_path = policy.export(
             tmp_path / "diffusion_package",
             backend="onnx",
             example_batch=batch,
@@ -52,15 +49,12 @@ class TestDiffusionExport:
 
     @pytest.mark.slow
     def test_detected_as_iterative(self, tmp_path: Path):
-        from lerobot.export import export_policy
         from lerobot.export.manifest import Manifest
 
         policy, batch = create_diffusion_policy_and_batch()
 
-        package_path = export_policy(
-            policy,
+        package_path = policy.to_onnx(
             tmp_path / "diffusion_package",
-            backend="onnx",
             example_batch=batch,
         )
 
@@ -71,15 +65,12 @@ class TestDiffusionExport:
 
     @pytest.mark.slow
     def test_scheduler_config_exported(self, tmp_path: Path):
-        from lerobot.export import export_policy
         from lerobot.export.manifest import Manifest
 
         policy, batch = create_diffusion_policy_and_batch()
 
-        package_path = export_policy(
-            policy,
+        package_path = policy.to_onnx(
             tmp_path / "diffusion_package",
-            backend="onnx",
             example_batch=batch,
         )
 
@@ -93,7 +84,7 @@ class TestDiffusionExport:
 
     @pytest.mark.slow
     def test_onnx_numerical_parity(self, tmp_path: Path):
-        from lerobot.export import export_policy, load_exported_policy
+        from lerobot.export import load_exported_policy
         from lerobot.utils.constants import OBS_IMAGES
 
         policy, batch = create_diffusion_policy_and_batch()
@@ -111,10 +102,8 @@ class TestDiffusionExport:
             global_cond = policy.diffusion._prepare_global_conditioning(stacked_batch)
             pytorch_output = policy.diffusion.conditional_sample(1, global_cond=global_cond, noise=noise)
 
-        package_path = export_policy(
-            policy,
+        package_path = policy.to_onnx(
             tmp_path / "diffusion_package",
-            backend="onnx",
             example_batch=batch,
             include_normalization=False,
         )
@@ -139,14 +128,12 @@ class TestDiffusionExport:
     @pytest.mark.slow
     def test_openvino_numerical_parity(self, tmp_path: Path):
         pytest.importorskip("openvino")
-        from lerobot.export import export_policy, load_exported_policy
+        from lerobot.export import load_exported_policy
 
         policy, batch = create_diffusion_policy_and_batch()
 
-        package_path = export_policy(
-            policy,
+        package_path = policy.to_openvino(
             tmp_path / "diffusion_package",
-            backend="onnx",
             example_batch=batch,
             include_normalization=False,
         )
@@ -175,38 +162,28 @@ class TestDiffusionExport:
 
 class TestDiffusionRuntime:
     @pytest.mark.slow
-    def test_create_runner_returns_iterative(self, tmp_path: Path):
-        from lerobot.export import export_policy
-        from lerobot.export.runner import IterativeRunner, create_runner
+    def test_from_exported_loads_user_facing_policy(self, tmp_path: Path):
+        from lerobot.export import ExportedPolicy
 
         policy, batch = create_diffusion_policy_and_batch()
 
-        package_path = export_policy(
-            policy,
+        package_path = policy.to_onnx(
             tmp_path / "diffusion_package",
-            backend="onnx",
             example_batch=batch,
         )
 
-        runtime = create_runner(package_path, backend="onnx", device="cpu")
+        runtime = policy.from_exported(package_path, backend="onnx", device="cpu")
 
-        assert isinstance(runtime, IterativeRunner)
+        assert isinstance(runtime, ExportedPolicy)
 
 
 class TestDiffusionExecuTorch:
     @require_executorch
     @pytest.mark.slow
     def test_executorch_export_creates_valid_package(self, tmp_path: Path):
-        from lerobot.export import export_policy
-
         policy, batch = create_diffusion_policy_and_batch()
 
-        package_path = export_policy(
-            policy,
-            tmp_path / "diff_et",
-            backend="executorch",
-            example_batch=batch,
-        )
+        package_path = policy.to_executorch(tmp_path / "diff_et", example_batch=batch)
 
         assert (package_path / "manifest.json").exists()
         assert (package_path / "artifacts" / "model.pte").exists()
@@ -215,24 +192,12 @@ class TestDiffusionExecuTorch:
     @require_executorch
     @pytest.mark.slow
     def test_executorch_numerical_parity_with_onnx(self, tmp_path: Path):
-        from lerobot.export import export_policy, load_exported_policy
+        from lerobot.export import load_exported_policy
 
         policy, batch = create_diffusion_policy_and_batch()
 
-        onnx_pkg = export_policy(
-            policy,
-            tmp_path / "diff_onnx",
-            backend="onnx",
-            example_batch=batch,
-            include_normalization=False,
-        )
-        et_pkg = export_policy(
-            policy,
-            tmp_path / "diff_et",
-            backend="executorch",
-            example_batch=batch,
-            include_normalization=False,
-        )
+        onnx_pkg = policy.to_onnx(tmp_path / "diff_onnx", example_batch=batch, include_normalization=False)
+        et_pkg = policy.to_executorch(tmp_path / "diff_et", example_batch=batch, include_normalization=False)
 
         noise = (
             np.random.default_rng(42)
@@ -260,24 +225,14 @@ class TestDiffusionExecuTorch:
     @pytest.mark.slow
     def test_executorch_numerical_parity_with_openvino(self, tmp_path: Path):
         pytest.importorskip("openvino")
-        from lerobot.export import export_policy, load_exported_policy
+        from lerobot.export import load_exported_policy
 
         policy, batch = create_diffusion_policy_and_batch()
 
-        onnx_pkg = export_policy(
-            policy,
-            tmp_path / "diff_onnx",
-            backend="onnx",
-            example_batch=batch,
-            include_normalization=False,
+        onnx_pkg = policy.to_openvino(
+            tmp_path / "diff_onnx", example_batch=batch, include_normalization=False
         )
-        et_pkg = export_policy(
-            policy,
-            tmp_path / "diff_et",
-            backend="executorch",
-            example_batch=batch,
-            include_normalization=False,
-        )
+        et_pkg = policy.to_executorch(tmp_path / "diff_et", example_batch=batch, include_normalization=False)
 
         noise = (
             np.random.default_rng(42)
