@@ -56,8 +56,8 @@ class TestPI0Export:
         assert (package_path / "artifacts" / "denoise.onnx").exists()
 
         manifest = Manifest.load(package_path / "manifest.json")
-        assert manifest.is_two_phase
-        assert manifest.model.runner["type"] == "two_phase"
+        assert manifest.is_kv_cache
+        assert manifest.model.runner["type"] == "kv_cache"
         assert manifest.model.runner["num_inference_steps"] == policy.config.num_inference_steps
 
     @pytest.mark.slow
@@ -166,8 +166,8 @@ class TestPI05Export:
         assert (package_path / "artifacts" / "denoise.onnx").exists()
 
         manifest = Manifest.load(package_path / "manifest.json")
-        assert manifest.is_two_phase
-        assert manifest.model.runner["type"] == "two_phase"
+        assert manifest.is_kv_cache
+        assert manifest.model.runner["type"] == "kv_cache"
         assert manifest.model.runner["num_inference_steps"] == policy.config.num_inference_steps
 
     @pytest.mark.slow
@@ -271,14 +271,14 @@ class TestSmolVLAExport:
         assert (package_path / "artifacts" / "denoise.onnx").exists()
 
         manifest = Manifest.load(package_path / "manifest.json")
-        assert manifest.is_two_phase
-        assert manifest.model.runner["type"] == "two_phase"
+        assert manifest.is_kv_cache
+        assert manifest.model.runner["type"] == "kv_cache"
         assert manifest.model.runner["num_inference_steps"] == policy.config.num_steps
 
     @pytest.mark.slow
     def test_runtime_forward_pass(self, tmp_path: Path):
         from lerobot.export import export_policy, load_exported_policy
-        from lerobot.export.runner import TwoPhaseRunner
+        from lerobot.export.runner import KVCacheRunner
 
         policy, batch = create_smolvla_policy_and_batch(device="cuda")
 
@@ -290,7 +290,7 @@ class TestSmolVLAExport:
         )
 
         runtime = load_exported_policy(package_path, backend="onnx", device="cpu")
-        assert isinstance(runtime, TwoPhaseRunner)
+        assert isinstance(runtime, KVCacheRunner)
 
         obs_numpy = to_numpy(batch)
         action_chunk = runtime.predict_action_chunk(obs_numpy)

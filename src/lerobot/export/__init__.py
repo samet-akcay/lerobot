@@ -51,8 +51,8 @@ from .runner import (
     ActionChunkingWrapper,
     InferenceRunner,
     IterativeRunner,
+    KVCacheRunner,
     SinglePassRunner,
-    TwoPhaseRunner,
     create_runner,
 )
 
@@ -86,7 +86,7 @@ __all__ = [
     "InferenceRunner",
     "SinglePassRunner",
     "IterativeRunner",
-    "TwoPhaseRunner",
+    "KVCacheRunner",
     "ActionChunkingWrapper",
     # Factory
     "create_runner",
