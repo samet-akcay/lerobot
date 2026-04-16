@@ -19,7 +19,7 @@ import os
 from importlib.resources import files
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from typing import TypedDict, TypeVar, Unpack
+from typing import TYPE_CHECKING, TypedDict, TypeVar, Unpack
 
 import packaging
 import safetensors
@@ -34,6 +34,9 @@ from lerobot.configs.train import TrainPipelineConfig
 from lerobot.utils.hub import HubMixin
 
 from .utils import log_model_loading_keys
+
+if TYPE_CHECKING:
+    from lerobot.export.policy import ExportedPolicy
 
 T = TypeVar("T", bound="PreTrainedPolicy")
 
@@ -71,6 +74,89 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
         self.config._save_pretrained(save_directory)
         model_to_save = self.module if hasattr(self, "module") else self
         save_model_as_safetensor(model_to_save, str(save_directory / SAFETENSORS_SINGLE_FILE))
+
+    def export(
+        self,
+        output_dir: str | Path,
+        *,
+        backend: str = "onnx",
+        example_batch: dict[str, Tensor] | None = None,
+        opset_version: int = 17,
+        include_normalization: bool = True,
+    ) -> Path:
+        """Export this policy as a ``policy_package``."""
+        from lerobot.export import export_policy
+
+        return export_policy(
+            self,
+            output_dir,
+            backend=backend,
+            example_batch=example_batch,
+            opset_version=opset_version,
+            include_normalization=include_normalization,
+        )
+
+    def to_onnx(
+        self,
+        output_dir: str | Path,
+        *,
+        example_batch: dict[str, Tensor] | None = None,
+        opset_version: int = 17,
+        include_normalization: bool = True,
+    ) -> Path:
+        """Export this policy as an ONNX-backed policy package."""
+        return self.export(
+            output_dir,
+            backend="onnx",
+            example_batch=example_batch,
+            opset_version=opset_version,
+            include_normalization=include_normalization,
+        )
+
+    def to_openvino(
+        self,
+        output_dir: str | Path,
+        *,
+        example_batch: dict[str, Tensor] | None = None,
+        opset_version: int = 17,
+        include_normalization: bool = True,
+    ) -> Path:
+        """Export this policy as an OpenVINO-compatible policy package."""
+        return self.export(
+            output_dir,
+            backend="onnx",
+            example_batch=example_batch,
+            opset_version=opset_version,
+            include_normalization=include_normalization,
+        )
+
+    def to_executorch(
+        self,
+        output_dir: str | Path,
+        *,
+        example_batch: dict[str, Tensor] | None = None,
+        include_normalization: bool = True,
+    ) -> Path:
+        """Export this policy as an ExecuTorch-backed policy package."""
+        return self.export(
+            output_dir,
+            backend="executorch",
+            example_batch=example_batch,
+            include_normalization=include_normalization,
+        )
+
+    @classmethod
+    def from_exported(
+        cls: builtins.type[T],
+        package_path: str | Path,
+        *,
+        backend: str | None = None,
+        device: str = "cpu",
+    ) -> "ExportedPolicy":
+        """Load an exported policy package using the familiar policy namespace."""
+        from lerobot.export import load_exported_policy
+
+        return load_exported_policy(package_path, backend=backend, device=device)
 
     @classmethod
     def from_pretrained(

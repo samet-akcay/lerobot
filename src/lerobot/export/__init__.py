@@ -15,8 +15,8 @@
 # limitations under the License.
 """LeRobot Policy Export module.
 
-Export LeRobot policies to portable ``policy_package`` format (ONNX, OpenVINO)
-for inference without the full training stack.
+Export LeRobot policies to portable ``policy_package`` format (ONNX, OpenVINO,
+ExecuTorch) for inference without the full training stack.
 
 The manifest format is the converged schema shared by LeRobot and PhysicalAI.
 
@@ -25,8 +25,8 @@ Example::
     from lerobot.export import export_policy, load_exported_policy
 
     package_path = export_policy(policy, "./exported", backend="onnx")
-    runner = load_exported_policy(package_path, backend="onnx", device="cpu")
-    action_chunk = runner.predict_action_chunk(observation)
+    exported_policy = load_exported_policy(package_path, backend="onnx", device="cpu")
+    action = exported_policy.select_action(observation)
 """
 
 from __future__ import annotations
@@ -47,14 +47,7 @@ from .manifest import (
     RobotConfig,
     TensorSpec,
 )
-from .runner import (
-    ActionChunkingWrapper,
-    InferenceRunner,
-    IterativeRunner,
-    KVCacheRunner,
-    SinglePassRunner,
-    create_runner,
-)
+from .policy import ExportedPolicy
 
 if TYPE_CHECKING:
     pass
@@ -64,8 +57,8 @@ def load_exported_policy(
     package_path: str | Path,
     backend: str | None = None,
     device: str = "cpu",
-) -> InferenceRunner:
-    """Load a policy package and return a runner.
+) -> ExportedPolicy:
+    """Load a policy package and return an exported policy.
 
     Args:
         package_path: Path to the policy package directory.
@@ -73,23 +66,16 @@ def load_exported_policy(
         device: Device for inference.
 
     Returns:
-        An :class:`InferenceRunner` instance ready for inference.
+        An :class:`ExportedPolicy` ready for inference.
     """
-    return create_runner(package_path, backend=backend, device=device)
+    return ExportedPolicy.from_package(package_path, backend=backend, device=device)
 
 
 __all__ = [
     # Main API
     "export_policy",
     "load_exported_policy",
-    # Runner classes
-    "InferenceRunner",
-    "SinglePassRunner",
-    "IterativeRunner",
-    "KVCacheRunner",
-    "ActionChunkingWrapper",
-    # Factory
-    "create_runner",
+    "ExportedPolicy",
     # Manifest
     "Manifest",
     "ModelConfig",
