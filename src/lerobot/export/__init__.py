@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-# Copyright 2025 The HuggingFace Inc. team. All rights reserved.
+# Copyright 2026 The HuggingFace Inc. team. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -35,18 +35,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from .exporter import export_policy
-from .manifest import (
-    CameraConfig,
-    HardwareConfig,
-    Manifest,
-    Metadata,
-    ModelConfig,
-    PolicyInfo,
-    PolicySource,
-    ProcessorSpec,
-    RobotConfig,
-    TensorSpec,
-)
+from .manifest import Manifest
 from .policy import ExportedPolicy
 
 if TYPE_CHECKING:
@@ -68,7 +57,7 @@ def load_exported_policy(
     Returns:
         An :class:`ExportedPolicy` ready for inference.
     """
-    return ExportedPolicy.from_package(package_path, backend=backend, device=device)
+    return ExportedPolicy.load(package_path, backend=backend, device=device)
 
 
 __all__ = [
@@ -76,15 +65,5 @@ __all__ = [
     "export_policy",
     "load_exported_policy",
     "ExportedPolicy",
-    # Manifest
     "Manifest",
-    "ModelConfig",
-    "PolicyInfo",
-    "PolicySource",
-    "ProcessorSpec",
-    "HardwareConfig",
-    "RobotConfig",
-    "CameraConfig",
-    "TensorSpec",
-    "Metadata",
 ]
