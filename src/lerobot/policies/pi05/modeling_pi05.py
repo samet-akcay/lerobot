@@ -956,11 +956,17 @@ class PI05EncoderModule(nn.Module):
             use_cache=True,
         )
 
-        # Flatten KV cache: past_key_values is a DynamicCache with per-layer keys/values
         outputs = [prefix_pad_masks.float()]
-        for layer_idx in range(self.num_layers):
-            outputs.append(past_key_values.layers[layer_idx].keys.float())
-            outputs.append(past_key_values.layers[layer_idx].values.float())
+        if hasattr(past_key_values, "layers"):
+            for layer_idx in range(self.num_layers):
+                outputs.append(past_key_values.layers[layer_idx].keys.float())
+                outputs.append(past_key_values.layers[layer_idx].values.float())
+        elif hasattr(past_key_values, "key_cache") and hasattr(past_key_values, "value_cache"):
+            for layer_idx in range(self.num_layers):
+                outputs.append(past_key_values.key_cache[layer_idx].float())
+                outputs.append(past_key_values.value_cache[layer_idx].float())
+        else:
+            raise AttributeError("Unsupported DynamicCache layout: expected layers or key_cache/value_cache")
 
         return tuple(outputs)
 
