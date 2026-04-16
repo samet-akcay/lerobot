@@ -70,7 +70,7 @@ def export_policy(
     Args:
         policy: Trained policy instance.
         output_dir: Directory to write the package.
-        backend: Export backend (``"onnx"``).
+        backend: Export backend (``"onnx"`` or ``"executorch"``).
         example_batch: Example input for tracing (auto-generated if ``None``).
         opset_version: ONNX opset version.
         include_normalization: Include normalization stats in the package.
@@ -96,13 +96,22 @@ def export_policy(
 
     kv_cache_extra: dict[str, Any] = {}
     if inference_type == "kv_cache":
-        if backend != "onnx":
+        if backend == "onnx":
+            artifacts, kv_cache_extra = _export_kv_cache_onnx(
+                policy, artifacts_dir, example_batch, opset_version
+            )
+        elif backend == "executorch":
+            artifacts, kv_cache_extra = _export_kv_cache_executorch(policy, artifacts_dir, example_batch)
+        else:
             raise ValueError(f"Unsupported backend for kv-cache export: {backend}")
-        artifacts, kv_cache_extra = _export_kv_cache_onnx(policy, artifacts_dir, example_batch, opset_version)
     elif backend == "onnx":
         model_path = artifacts_dir / "model.onnx"
         _export_onnx(policy, model_path, example_batch, opset_version, inference_type)
         artifacts = {"model": "artifacts/model.onnx"}
+    elif backend == "executorch":
+        model_path = artifacts_dir / "model.pte"
+        _export_executorch(policy, model_path, example_batch, inference_type)
+        artifacts = {"model": "artifacts/model.pte"}
     else:
         raise ValueError(f"Unsupported backend: {backend}")
 
@@ -400,18 +409,43 @@ def _create_iterative_wrapper(
 # ---------------------------------------------------------------------------
 
 
-def _fix_onnx_gather_indices(onnx_path: Path) -> None:
-    """Fix ONNX Gather nodes that have float indices from ScatterND outputs."""
+def _fix_onnx_scatter_gather_dtypes(onnx_path: Path) -> None:
+    """Fix ONNX ScatterND/Gather dtype mismatches in exported encoder graphs."""
     import onnx
-    from onnx import TensorProto, helper
+    from onnx import TensorProto, helper, shape_inference
 
     model = onnx.load(str(onnx_path))
+    inferred = shape_inference.infer_shapes(model)
+
+    type_map: dict[str, int] = {}
+    for value_info in [*inferred.graph.value_info, *inferred.graph.input, *inferred.graph.output]:
+        tensor_type = value_info.type.tensor_type
+        if tensor_type.elem_type:
+            type_map[value_info.name] = tensor_type.elem_type
+
     nodes_to_insert: list[tuple[int, onnx.NodeProto]] = []
 
     for idx, node in enumerate(model.graph.node):
-        if node.op_type == "Gather" and "position_embedding" in node.name:
+        if node.op_type == "ScatterND" and len(node.input) >= 3:
+            data_input, _, updates_input = node.input[:3]
+            data_type = type_map.get(data_input)
+            updates_type = type_map.get(updates_input)
+            if data_type is not None and updates_type is not None and data_type != updates_type:
+                cast_output = updates_input + f"_cast_to_{TensorProto.DataType.Name(data_type).lower()}"
+                cast_node = helper.make_node(
+                    "Cast",
+                    inputs=[updates_input],
+                    outputs=[cast_output],
+                    name=updates_input + f"/Cast_to_{TensorProto.DataType.Name(data_type).lower()}",
+                    to=data_type,
+                )
+                nodes_to_insert.append((idx, cast_node))
+                node.input[2] = cast_output
+
+        if node.op_type == "Gather" and len(node.input) >= 2 and "position_embedding" in node.name:
             indices_input = node.input[1]
-            if "ScatterND" in indices_input:
+            indices_type = type_map.get(indices_input)
+            if indices_type is not None and indices_type != TensorProto.INT64:
                 cast_output = indices_input + "_cast_to_int64"
                 cast_node = helper.make_node(
                     "Cast",
@@ -520,7 +554,8 @@ def _export_kv_cache_onnx(
         dynamo=False,
     )
 
-    _fix_onnx_gather_indices(encoder_path)
+    if not is_pi0:
+        _fix_onnx_scatter_gather_dtypes(encoder_path)
 
     denoise_output_names = ["v_t"]
     denoise_dynamic_axes = {name: {0: "batch_size"} for name in denoise_input_names + denoise_output_names}
@@ -543,6 +578,173 @@ def _export_kv_cache_onnx(
     artifacts = {
         "encoder": "artifacts/encoder.onnx",
         "denoise": "artifacts/denoise.onnx",
+    }
+
+    kv_cache_extra = {
+        "num_inference_steps": num_steps,
+        "scheduler": "euler",
+        "action_dim": action_dim,
+        "chunk_size": chunk_size,
+        "num_layers": num_layers,
+        "num_kv_heads": num_kv_heads,
+        "head_dim": head_dim,
+        "input_mapping": input_mapping,
+        "state_dim": export_config.state_dim,
+    }
+
+    return artifacts, kv_cache_extra
+
+
+# ---------------------------------------------------------------------------
+# ExecuTorch export (single-model)
+# ---------------------------------------------------------------------------
+
+
+def _write_metadata_yaml(
+    artifacts_dir: Path,
+    input_names: list[str],
+    output_names: list[str],
+) -> None:
+    """Write ``metadata.yaml`` with input/output name mapping for ExecuTorch."""
+    import yaml
+
+    metadata = {"input_names": input_names, "output_names": output_names}
+    with (artifacts_dir / "metadata.yaml").open("w", encoding="utf-8") as f:
+        yaml.safe_dump(metadata, f, default_flow_style=False)
+
+
+def _write_et_model_metadata(
+    artifacts_dir: Path,
+    model_name: str,
+    input_names: list[str],
+    output_names: list[str],
+) -> None:
+    """Write per-model metadata YAML for multi-model ExecuTorch packages."""
+    import yaml
+
+    metadata = {"input_names": input_names, "output_names": output_names}
+    with (artifacts_dir / f"{model_name}_metadata.yaml").open("w", encoding="utf-8") as f:
+        yaml.safe_dump(metadata, f, default_flow_style=False)
+
+
+def _export_executorch(
+    policy: PreTrainedPolicy,
+    output_path: Path,
+    example_batch: dict[str, Tensor],
+    inference_type: str,
+) -> None:
+    """Export a single-model policy to ExecuTorch ``.pte`` format."""
+    from executorch.exir import to_edge
+    from torch.export import export as torch_export
+
+    from .protocols import is_iterative_exportable, is_single_phase_exportable
+
+    policy.eval()
+
+    if inference_type == "action_chunking":
+        if is_single_phase_exportable(policy):
+            wrapper = policy.get_forward_module()
+            example_inputs, input_names, output_names = policy.prepare_forward_inputs(example_batch)
+        else:
+            wrapper, input_names, output_names, export_batch = _create_single_pass_wrapper(
+                policy, example_batch
+            )
+            example_inputs = tuple(export_batch[name] for name in input_names if name in export_batch)
+    else:
+        if is_iterative_exportable(policy):
+            wrapper = policy.get_denoise_module()
+            example_inputs, input_names, output_names = policy.prepare_denoise_inputs(example_batch)
+        else:
+            wrapper, input_names, output_names, export_batch = _create_iterative_wrapper(
+                policy, example_batch
+            )
+            example_inputs = tuple(export_batch[name] for name in input_names if name in export_batch)
+
+    exported = torch_export(wrapper, example_inputs)
+    edge = to_edge(exported)
+    et_program = edge.to_executorch()
+
+    with output_path.open("wb") as f:
+        f.write(et_program.buffer)
+
+    _write_metadata_yaml(output_path.parent, input_names, output_names)
+
+
+def _export_kv_cache_executorch(
+    policy: PreTrainedPolicy,
+    artifacts_dir: Path,
+    example_batch: dict[str, Tensor],
+) -> tuple[dict[str, str], dict[str, Any]]:
+    """Export a KV-cache VLA policy to ExecuTorch ``.pte`` format.
+
+    Returns:
+        Tuple of (artifacts dict, extra runner params dict).
+    """
+    from executorch.exir import to_edge
+    from torch.export import export as torch_export
+
+    from .protocols import is_kv_cache_exportable
+
+    policy.eval()
+    device = next(policy.parameters()).device
+
+    is_pi0 = "pi0" in policy.__class__.__name__.lower()
+    if not is_pi0:
+        policy = policy.float()
+
+    if not is_kv_cache_exportable(policy):
+        raise ValueError(f"KV-cache policy {policy.__class__.__name__} must implement ExportableKVCache.")
+
+    export_config = policy.get_kv_cache_export_config()
+    num_layers = export_config.num_layers
+    num_kv_heads = export_config.num_kv_heads
+    head_dim = export_config.head_dim
+    num_steps = export_config.num_steps
+    chunk_size = export_config.chunk_size
+    action_dim = export_config.action_dim
+
+    encoder_inputs, encoder_input_names, num_images, input_mapping = policy.prepare_encoder_inputs(
+        example_batch
+    )
+    encoder_wrapper = policy.get_encoder_module(num_images=num_images)
+
+    with torch.no_grad():
+        encoder_outputs = encoder_wrapper(*encoder_inputs)
+        prefix_len = encoder_outputs[0].shape[1]
+
+    denoise_inputs, denoise_input_names = policy.prepare_denoise_inputs(prefix_len, device)
+    denoise_wrapper = policy.get_denoise_module()
+
+    encoder_output_names = ["prefix_pad_mask"]
+    for layer_idx in range(num_layers):
+        encoder_output_names.append(f"past_key_{layer_idx}")
+        encoder_output_names.append(f"past_value_{layer_idx}")
+
+    # Export encoder
+    exported_encoder = torch_export(encoder_wrapper, encoder_inputs)
+    edge_encoder = to_edge(exported_encoder)
+    et_encoder = edge_encoder.to_executorch()
+
+    encoder_path = artifacts_dir / "encoder.pte"
+    with encoder_path.open("wb") as f:
+        f.write(et_encoder.buffer)
+    _write_et_model_metadata(artifacts_dir, "encoder", encoder_input_names, encoder_output_names)
+
+    denoise_output_names = ["v_t"]
+
+    exported_denoise = torch_export(denoise_wrapper, denoise_inputs)
+    edge_denoise = to_edge(exported_denoise)
+    et_denoise = edge_denoise.to_executorch()
+
+    denoise_path = artifacts_dir / "denoise.pte"
+    with denoise_path.open("wb") as f:
+        f.write(et_denoise.buffer)
+
+    _write_et_model_metadata(artifacts_dir, "denoise", denoise_input_names, denoise_output_names)
+
+    artifacts = {
+        "encoder": "artifacts/encoder.pte",
+        "denoise": "artifacts/denoise.pte",
     }
 
     kv_cache_extra = {
