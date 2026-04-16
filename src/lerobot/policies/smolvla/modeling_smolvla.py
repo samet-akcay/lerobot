@@ -60,7 +60,6 @@ import torch
 import torch.nn.functional as F  # noqa: N812
 from torch import Tensor, nn
 
-from .smolvlm_with_expert import SmolVLMWithExpertModel, apply_rope
 from lerobot.utils.constants import ACTION, OBS_LANGUAGE_ATTENTION_MASK, OBS_LANGUAGE_TOKENS, OBS_STATE
 from lerobot.utils.device_utils import get_safe_dtype
 from lerobot.utils.import_utils import require_package
@@ -71,6 +70,7 @@ from ..utils import (
     populate_queues,
 )
 from .configuration_smolvla import SmolVLAConfig
+from .smolvlm_with_expert import SmolVLMWithExpertModel, apply_rope
 
 
 class ActionSelectKwargs(TypedDict, total=False):

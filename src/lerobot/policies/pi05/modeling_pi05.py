@@ -956,10 +956,11 @@ class PI05EncoderModule(nn.Module):
             use_cache=True,
         )
 
+        # Flatten KV cache: past_key_values is a DynamicCache with per-layer keys/values
         outputs = [prefix_pad_masks.float()]
         for layer_idx in range(self.num_layers):
-            outputs.append(past_key_values.key_cache[layer_idx].float())
-            outputs.append(past_key_values.value_cache[layer_idx].float())
+            outputs.append(past_key_values.layers[layer_idx].keys.float())
+            outputs.append(past_key_values.layers[layer_idx].values.float())
 
         return tuple(outputs)
 
