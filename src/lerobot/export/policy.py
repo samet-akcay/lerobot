@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-# Copyright 2025 The HuggingFace Inc. team. All rights reserved.
+# Copyright 2026 The HuggingFace Inc. team. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -45,7 +45,7 @@ class ExportedPolicy:
         self._action_queue: deque[NDArray[np.floating]] = deque()
 
     @classmethod
-    def from_package(
+    def load(
         cls,
         package_path: str | Path,
         backend: str | None = None,

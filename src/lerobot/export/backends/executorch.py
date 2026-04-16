@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-# Copyright 2025 The HuggingFace Inc. team. All rights reserved.
+# Copyright 2026 The HuggingFace Inc. team. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -35,7 +35,7 @@ class ExecuTorchRuntimeAdapter:
     """ExecuTorch runtime adapter for model inference.
 
     This adapter loads and runs models exported to the ExecuTorch ``.pte``
-    format. Input and output names are read from ``metadata.yaml``
+    format. Input and output names are read from ``io_spec.yaml``
     colocated with the model, since ``.pte`` files do not embed
     named I/O metadata like ONNX.
     """
@@ -73,15 +73,15 @@ class ExecuTorchRuntimeAdapter:
         self._load_metadata()
 
     def _load_metadata(self) -> None:
-        """Load input/output name metadata from ``metadata.yaml`` or ``{model_name}_metadata.yaml``."""
+        """Load input/output name metadata from ``io_spec.yaml`` sidecars."""
         model_stem = self._model_path.stem
-        model_specific = self._model_path.parent / f"{model_stem}_metadata.yaml"
-        generic = self._model_path.parent / "metadata.yaml"
+        model_specific = self._model_path.parent / f"{model_stem}_io_spec.yaml"
+        generic = self._model_path.parent / "io_spec.yaml"
 
         metadata_path = model_specific if model_specific.exists() else generic
 
         if not metadata_path.exists():
-            logger.warning("No metadata.yaml found alongside %s; using positional I/O.", self._model_path)
+            logger.warning("No io_spec.yaml found alongside %s; using positional I/O.", self._model_path)
             return
 
         try:

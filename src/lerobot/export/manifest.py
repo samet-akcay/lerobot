@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-# Copyright 2025 The HuggingFace Inc. team. All rights reserved.
+# Copyright 2026 The HuggingFace Inc. team. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -18,10 +18,8 @@
 The manifest is the contract between export and runtime.  It is pure JSON
 data — no code references, no framework-specific class paths.
 
-Both LeRobot and PhysicalAI read and write this same schema.  LeRobot uses
-the ``type`` + flat-params style for components (runners, preprocessors,
-postprocessors); PhysicalAI can additionally use ``class_path`` +
-``init_args`` for full-power component instantiation.
+LeRobot uses the ``type`` + flat-params style for components (runners,
+preprocessors, postprocessors).
 
 Schema overview::
 
@@ -52,11 +50,6 @@ from typing import Any
 
 MANIFEST_FORMAT = "policy_package"
 MANIFEST_VERSION = "1.0"
-
-
-# ---------------------------------------------------------------------------
-# Generic dataclass serialization helpers
-# ---------------------------------------------------------------------------
 
 
 def _serialize_value(value: Any) -> Any:
