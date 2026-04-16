@@ -28,6 +28,7 @@ diffusers = pytest.importorskip("diffusers")
 from tests.export.conftest import (  # noqa: E402
     assert_numerical_parity,
     create_diffusion_policy_and_batch,
+    require_executorch,
     to_numpy,
 )
 
@@ -190,3 +191,112 @@ class TestDiffusionRuntime:
         runtime = create_runner(package_path, backend="onnx", device="cpu")
 
         assert isinstance(runtime, IterativeRunner)
+
+
+class TestDiffusionExecuTorch:
+    @require_executorch
+    @pytest.mark.slow
+    def test_executorch_export_creates_valid_package(self, tmp_path: Path):
+        from lerobot.export import export_policy
+
+        policy, batch = create_diffusion_policy_and_batch()
+
+        package_path = export_policy(
+            policy,
+            tmp_path / "diff_et",
+            backend="executorch",
+            example_batch=batch,
+        )
+
+        assert (package_path / "manifest.json").exists()
+        assert (package_path / "artifacts" / "model.pte").exists()
+        assert (package_path / "artifacts" / "metadata.yaml").exists()
+
+    @require_executorch
+    @pytest.mark.slow
+    def test_executorch_numerical_parity_with_onnx(self, tmp_path: Path):
+        from lerobot.export import export_policy, load_exported_policy
+
+        policy, batch = create_diffusion_policy_and_batch()
+
+        onnx_pkg = export_policy(
+            policy,
+            tmp_path / "diff_onnx",
+            backend="onnx",
+            example_batch=batch,
+            include_normalization=False,
+        )
+        et_pkg = export_policy(
+            policy,
+            tmp_path / "diff_et",
+            backend="executorch",
+            example_batch=batch,
+            include_normalization=False,
+        )
+
+        noise = (
+            np.random.default_rng(42)
+            .standard_normal((1, policy.config.horizon, policy.config.action_feature.shape[0]))
+            .astype(np.float32)
+        )
+
+        obs_numpy = to_numpy(batch)
+
+        onnx_rt = load_exported_policy(onnx_pkg, backend="onnx", device="cpu")
+        et_rt = load_exported_policy(et_pkg, backend="executorch", device="cpu")
+
+        onnx_output = onnx_rt.predict_action_chunk(obs_numpy, noise=noise)
+        et_output = et_rt.predict_action_chunk(obs_numpy, noise=noise)
+
+        assert_numerical_parity(
+            et_output,
+            onnx_output,
+            rtol=1e-4,
+            atol=1e-4,
+            msg="Diffusion ExecuTorch output does not match ONNX output",
+        )
+
+    @require_executorch
+    @pytest.mark.slow
+    def test_executorch_numerical_parity_with_openvino(self, tmp_path: Path):
+        pytest.importorskip("openvino")
+        from lerobot.export import export_policy, load_exported_policy
+
+        policy, batch = create_diffusion_policy_and_batch()
+
+        onnx_pkg = export_policy(
+            policy,
+            tmp_path / "diff_onnx",
+            backend="onnx",
+            example_batch=batch,
+            include_normalization=False,
+        )
+        et_pkg = export_policy(
+            policy,
+            tmp_path / "diff_et",
+            backend="executorch",
+            example_batch=batch,
+            include_normalization=False,
+        )
+
+        noise = (
+            np.random.default_rng(42)
+            .standard_normal((1, policy.config.horizon, policy.config.action_feature.shape[0]))
+            .astype(np.float32)
+        )
+
+        obs_numpy = to_numpy(batch)
+
+        ov_rt = load_exported_policy(onnx_pkg, backend="openvino", device="cpu")
+        et_rt = load_exported_policy(et_pkg, backend="executorch", device="cpu")
+
+        ov_output = ov_rt.predict_action_chunk(obs_numpy, noise=noise)
+        et_output = et_rt.predict_action_chunk(obs_numpy, noise=noise)
+
+        assert_numerical_parity(
+            et_output,
+            ov_output,
+            rtol=1e-4,
+            atol=1e-4,
+            msg="Diffusion ExecuTorch output does not match OpenVINO output",
+        )

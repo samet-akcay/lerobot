@@ -63,6 +63,18 @@ def require_diffusers(func):
     return wrapper
 
 
+def require_executorch(func):
+    """Decorator that skips the test if executorch is not available."""
+    from functools import wraps
+
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        pytest.importorskip("executorch")
+        return func(*args, **kwargs)
+
+    return wrapper
+
+
 def skip_if_no_cuda():
     """Skip test if CUDA is not available."""
     if not torch.cuda.is_available():
