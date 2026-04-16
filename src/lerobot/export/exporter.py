@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-# Copyright 2025 The HuggingFace Inc. team. All rights reserved.
+# Copyright 2026 The HuggingFace Inc. team. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -13,11 +13,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Policy export: convert PyTorch policies to portable ONNX packages.
-
-Produces a ``policy_package`` directory with ``manifest.json`` in the
-converged format shared by LeRobot and PhysicalAI.
-"""
+"""Policy export: convert PyTorch policies to portable policy packages."""
 
 from __future__ import annotations
 
@@ -45,15 +41,24 @@ from .manifest import (
 )
 from .normalize import save_stats_safetensors
 
+SINGLE_MODEL_EXPORTERS = {
+    "onnx": ("model.onnx", "artifacts/model.onnx"),
+    "executorch": ("model.pte", "artifacts/model.pte"),
+}
+
+KV_CACHE_EXPORTERS = {
+    "onnx": lambda policy, artifacts_dir, example_batch, opset_version: _export_kv_cache_onnx(
+        policy, artifacts_dir, example_batch, opset_version
+    ),
+    "executorch": lambda policy, artifacts_dir, example_batch, _opset_version: _export_kv_cache_executorch(
+        policy, artifacts_dir, example_batch
+    ),
+}
+
 if TYPE_CHECKING:
     from lerobot.policies.pretrained import PreTrainedPolicy
 
 logger = logging.getLogger(__name__)
-
-
-# ---------------------------------------------------------------------------
-# Public API
-# ---------------------------------------------------------------------------
 
 
 def export_policy(
@@ -94,26 +99,14 @@ def export_policy(
 
     # ---- Export model artifacts -----------------------------------------
 
-    kv_cache_extra: dict[str, Any] = {}
-    if inference_type == "kv_cache":
-        if backend == "onnx":
-            artifacts, kv_cache_extra = _export_kv_cache_onnx(
-                policy, artifacts_dir, example_batch, opset_version
-            )
-        elif backend == "executorch":
-            artifacts, kv_cache_extra = _export_kv_cache_executorch(policy, artifacts_dir, example_batch)
-        else:
-            raise ValueError(f"Unsupported backend for kv-cache export: {backend}")
-    elif backend == "onnx":
-        model_path = artifacts_dir / "model.onnx"
-        _export_onnx(policy, model_path, example_batch, opset_version, inference_type)
-        artifacts = {"model": "artifacts/model.onnx"}
-    elif backend == "executorch":
-        model_path = artifacts_dir / "model.pte"
-        _export_executorch(policy, model_path, example_batch, inference_type)
-        artifacts = {"model": "artifacts/model.pte"}
-    else:
-        raise ValueError(f"Unsupported backend: {backend}")
+    artifacts, kv_cache_extra = _export_artifacts(
+        policy=policy,
+        backend=backend,
+        inference_type=inference_type,
+        artifacts_dir=artifacts_dir,
+        example_batch=example_batch,
+        opset_version=opset_version,
+    )
 
     # ---- Normalization as preprocessors/postprocessors ------------------
 
@@ -187,9 +180,18 @@ def _detect_inference_type(policy: PreTrainedPolicy) -> str:
                 )
             return declared
 
-    # Fallback heuristics
-    name = policy.__class__.__name__.lower()
+    from .protocols import is_iterative_exportable, is_kv_cache_exportable, is_single_phase_exportable
 
+    if is_kv_cache_exportable(policy):
+        return "kv_cache"
+
+    if is_iterative_exportable(policy):
+        return "iterative"
+
+    if is_single_phase_exportable(policy):
+        return "action_chunking"
+
+    name = policy.__class__.__name__.lower()
     if "pi0" in name or "smolvla" in name:
         return "kv_cache"
 
@@ -198,11 +200,6 @@ def _detect_inference_type(policy: PreTrainedPolicy) -> str:
             return "iterative"
 
     return "action_chunking"
-
-
-# ---------------------------------------------------------------------------
-# Example batch generation
-# ---------------------------------------------------------------------------
 
 
 def _generate_example_batch(policy: PreTrainedPolicy) -> dict[str, Tensor]:
@@ -229,9 +226,33 @@ def _generate_example_batch(policy: PreTrainedPolicy) -> dict[str, Tensor]:
     return batch
 
 
-# ---------------------------------------------------------------------------
-# ONNX export (single-model)
-# ---------------------------------------------------------------------------
+def _export_artifacts(
+    policy: PreTrainedPolicy,
+    backend: str,
+    inference_type: str,
+    artifacts_dir: Path,
+    example_batch: dict[str, Tensor],
+    opset_version: int,
+) -> tuple[dict[str, str], dict[str, Any]]:
+    if inference_type == "kv_cache":
+        exporter = KV_CACHE_EXPORTERS.get(backend)
+        if exporter is None:
+            raise ValueError(f"Unsupported backend for kv-cache export: {backend}")
+        return exporter(policy, artifacts_dir, example_batch, opset_version)
+
+    artifact_info = SINGLE_MODEL_EXPORTERS.get(backend)
+    if artifact_info is None:
+        raise ValueError(f"Unsupported backend: {backend}")
+
+    filename, manifest_path = artifact_info
+    output_path = artifacts_dir / filename
+
+    if backend == "onnx":
+        _export_onnx(policy, output_path, example_batch, opset_version, inference_type)
+    else:
+        _export_executorch(policy, output_path, example_batch, inference_type)
+
+    return {"model": manifest_path}, {}
 
 
 def _export_onnx(
@@ -404,11 +425,6 @@ def _create_iterative_wrapper(
         return GenericIterativeWrapper(policy), input_names, output_names, extended_batch
 
 
-# ---------------------------------------------------------------------------
-# ONNX export (kv-cache)
-# ---------------------------------------------------------------------------
-
-
 def _fix_onnx_scatter_gather_dtypes(onnx_path: Path) -> None:
     """Fix ONNX ScatterND/Gather dtype mismatches in exported encoder graphs."""
     import onnx
@@ -533,7 +549,6 @@ def _export_kv_cache_onnx(
     denoise_inputs, denoise_input_names = policy.prepare_denoise_inputs(prefix_len, device)
     denoise_wrapper = policy.get_denoise_module()
 
-    # Encoder output names
     encoder_output_names = ["prefix_pad_mask"]
     for layer_idx in range(num_layers):
         encoder_output_names.append(f"past_key_{layer_idx}")
@@ -595,35 +610,30 @@ def _export_kv_cache_onnx(
     return artifacts, kv_cache_extra
 
 
-# ---------------------------------------------------------------------------
-# ExecuTorch export (single-model)
-# ---------------------------------------------------------------------------
-
-
-def _write_metadata_yaml(
+def _write_io_spec_yaml(
     artifacts_dir: Path,
     input_names: list[str],
     output_names: list[str],
 ) -> None:
-    """Write ``metadata.yaml`` with input/output name mapping for ExecuTorch."""
+    """Write ``io_spec.yaml`` with input/output name mapping for ExecuTorch."""
     import yaml
 
     metadata = {"input_names": input_names, "output_names": output_names}
-    with (artifacts_dir / "metadata.yaml").open("w", encoding="utf-8") as f:
+    with (artifacts_dir / "io_spec.yaml").open("w", encoding="utf-8") as f:
         yaml.safe_dump(metadata, f, default_flow_style=False)
 
 
-def _write_et_model_metadata(
+def _write_et_model_io_spec(
     artifacts_dir: Path,
     model_name: str,
     input_names: list[str],
     output_names: list[str],
 ) -> None:
-    """Write per-model metadata YAML for multi-model ExecuTorch packages."""
+    """Write per-model I/O spec YAML for multi-model ExecuTorch packages."""
     import yaml
 
     metadata = {"input_names": input_names, "output_names": output_names}
-    with (artifacts_dir / f"{model_name}_metadata.yaml").open("w", encoding="utf-8") as f:
+    with (artifacts_dir / f"{model_name}_io_spec.yaml").open("w", encoding="utf-8") as f:
         yaml.safe_dump(metadata, f, default_flow_style=False)
 
 
@@ -667,7 +677,7 @@ def _export_executorch(
     with output_path.open("wb") as f:
         f.write(et_program.buffer)
 
-    _write_metadata_yaml(output_path.parent, input_names, output_names)
+    _write_io_spec_yaml(output_path.parent, input_names, output_names)
 
 
 def _export_kv_cache_executorch(
@@ -685,17 +695,16 @@ def _export_kv_cache_executorch(
 
     from .protocols import is_kv_cache_exportable
 
-    policy.eval()
-    device = next(policy.parameters()).device
-
-    is_pi0 = "pi0" in policy.__class__.__name__.lower()
-    if not is_pi0:
-        policy = policy.float()
-
     if not is_kv_cache_exportable(policy):
         raise ValueError(f"KV-cache policy {policy.__class__.__name__} must implement ExportableKVCache.")
 
+    policy.eval()
+    device = next(policy.parameters()).device
+
     export_config = policy.get_kv_cache_export_config()
+    if "pi0" not in policy.__class__.__name__.lower():
+        policy = policy.float()
+
     num_layers = export_config.num_layers
     num_kv_heads = export_config.num_kv_heads
     head_dim = export_config.head_dim
@@ -720,7 +729,6 @@ def _export_kv_cache_executorch(
         encoder_output_names.append(f"past_key_{layer_idx}")
         encoder_output_names.append(f"past_value_{layer_idx}")
 
-    # Export encoder
     exported_encoder = torch_export(encoder_wrapper, encoder_inputs)
     edge_encoder = to_edge(exported_encoder)
     et_encoder = edge_encoder.to_executorch()
@@ -728,7 +736,7 @@ def _export_kv_cache_executorch(
     encoder_path = artifacts_dir / "encoder.pte"
     with encoder_path.open("wb") as f:
         f.write(et_encoder.buffer)
-    _write_et_model_metadata(artifacts_dir, "encoder", encoder_input_names, encoder_output_names)
+    _write_et_model_io_spec(artifacts_dir, "encoder", encoder_input_names, encoder_output_names)
 
     denoise_output_names = ["v_t"]
 
@@ -740,7 +748,7 @@ def _export_kv_cache_executorch(
     with denoise_path.open("wb") as f:
         f.write(et_denoise.buffer)
 
-    _write_et_model_metadata(artifacts_dir, "denoise", denoise_input_names, denoise_output_names)
+    _write_et_model_io_spec(artifacts_dir, "denoise", denoise_input_names, denoise_output_names)
 
     artifacts = {
         "encoder": "artifacts/encoder.pte",
@@ -762,11 +770,6 @@ def _export_kv_cache_executorch(
     return artifacts, kv_cache_extra
 
 
-# ---------------------------------------------------------------------------
-# Manifest construction
-# ---------------------------------------------------------------------------
-
-
 def _build_manifest(
     policy: PreTrainedPolicy,
     policy_name: str,
@@ -779,7 +782,6 @@ def _build_manifest(
     """Build the converged policy_package manifest."""
     config = policy.config
 
-    # Build runner config dict
     runner: dict[str, Any] = {"type": inference_type}
 
     if inference_type == "action_chunking":
@@ -797,7 +799,6 @@ def _build_manifest(
         runner.update(kv_cache_extra)
         runner["n_action_steps"] = kv_cache_extra.get("chunk_size", 50)
 
-    # Build model config
     n_obs_steps = getattr(config, "n_obs_steps", 1)
     model_config = ModelConfig(
         n_obs_steps=n_obs_steps,
@@ -807,7 +808,6 @@ def _build_manifest(
         postprocessors=postprocessors or None,
     )
 
-    # Build policy info
     policy_info = PolicyInfo(
         name=policy_name,
         source=PolicySource(
@@ -816,10 +816,8 @@ def _build_manifest(
         ),
     )
 
-    # Build hardware config
     hardware = _build_hardware_config(policy)
 
-    # Build metadata
     metadata = Metadata(
         created_at=datetime.now(UTC).isoformat(),
         created_by="lerobot.export",
