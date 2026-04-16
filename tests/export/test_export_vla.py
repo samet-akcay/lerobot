@@ -305,19 +305,22 @@ class TestSmolVLAExport:
         from lerobot.utils.constants import OBS_LANGUAGE_ATTENTION_MASK, OBS_LANGUAGE_TOKENS, OBS_STATE
 
         policy, batch = create_smolvla_policy_and_batch(device="cuda")
+        policy_cpu = policy.cpu().float().eval()
+        batch_cpu = {k: v.detach().cpu() for k, v in batch.items()}
 
         torch.manual_seed(42)
         np.random.seed(42)
         noise = torch.randn(1, policy.config.chunk_size, policy.config.max_action_dim, device="cuda")
+        noise_cpu = noise.detach().cpu()
 
         with torch.no_grad():
-            pytorch_output = policy.model.sample_actions(
-                images=[batch["observation.images.top"]],
-                img_masks=[torch.ones(1, dtype=torch.bool, device="cuda")],
-                lang_tokens=batch[OBS_LANGUAGE_TOKENS],
-                lang_masks=batch[OBS_LANGUAGE_ATTENTION_MASK],
-                state=torch.nn.functional.pad(batch[OBS_STATE], (0, 32 - 14)),
-                noise=noise,
+            pytorch_output = policy_cpu.model.sample_actions(
+                images=[batch_cpu["observation.images.top"]],
+                img_masks=[torch.ones(1, dtype=torch.bool)],
+                lang_tokens=batch_cpu[OBS_LANGUAGE_TOKENS],
+                lang_masks=batch_cpu[OBS_LANGUAGE_ATTENTION_MASK],
+                state=torch.nn.functional.pad(batch_cpu[OBS_STATE], (0, 32 - 14)),
+                noise=noise_cpu,
             )
 
         package_path = export_policy(
@@ -331,7 +334,7 @@ class TestSmolVLAExport:
         runtime = load_exported_policy(package_path, backend="onnx", device="cpu")
         obs_numpy = to_numpy(batch)
         obs_numpy[OBS_STATE] = np.pad(obs_numpy[OBS_STATE], ((0, 0), (0, 32 - 14)))
-        onnx_output = runtime.predict_action_chunk(obs_numpy, noise=noise.cpu().numpy())
+        onnx_output = runtime.predict_action_chunk(obs_numpy, noise=noise_cpu.numpy())
 
         pytorch_np = pytorch_output.cpu().numpy()
         if pytorch_np.ndim == 3 and pytorch_np.shape[0] == 1:
