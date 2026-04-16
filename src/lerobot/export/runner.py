@@ -19,7 +19,7 @@ Runners orchestrate the inference loop for a given policy type:
 
 - :class:`SinglePassRunner` — single forward pass (ACT, VQ-BeT)
 - :class:`IterativeRunner` — multi-step denoising / flow-matching (Diffusion)
-- :class:`TwoPhaseRunner` — encode once + iterative denoise (PI0, SmolVLA)
+- :class:`KVCacheRunner` — encode once + iterative denoise (PI0, SmolVLA)
 - :class:`ActionChunkingWrapper` — single-action queue on top of any runner
 """
 
@@ -316,12 +316,12 @@ class IterativeRunner:
 
 
 # ---------------------------------------------------------------------------
-# TwoPhaseRunner
+# KVCacheRunner
 # ---------------------------------------------------------------------------
 
 
-class TwoPhaseRunner:
-    """Runner for two-phase VLA policies (PI0, SmolVLA).
+class KVCacheRunner:
+    """Runner for KV-cache VLA policies (PI0, SmolVLA).
 
     Phase 1 (encode): process images/language/state → KV cache (run once).
     Phase 2 (denoise): iterative denoising using cached KV values (run N times).
@@ -341,7 +341,7 @@ class TwoPhaseRunner:
         encoder_artifact = manifest.model.artifacts.get("encoder")
         denoise_artifact = manifest.model.artifacts.get("denoise")
         if encoder_artifact is None or denoise_artifact is None:
-            raise ValueError("Two-phase runner requires 'encoder' and 'denoise' in model.artifacts")
+            raise ValueError("KVCacheRunner requires 'encoder' and 'denoise' in model.artifacts")
 
         encoder_path = self._package_path / encoder_artifact
         denoise_path = self._package_path / denoise_artifact
@@ -443,7 +443,7 @@ class TwoPhaseRunner:
                 outputs,
                 primary_name="v_t",
                 fallback_names=["velocity"],
-                context="TwoPhaseRunner.denoise",
+                context="KVCacheRunner.denoise",
             )
 
             x_t = x_t + dt * v_t
@@ -534,7 +534,7 @@ def create_runner(
         return SinglePassRunner(package_path, manifest, backend, device)
     elif runner_type == "iterative":
         return IterativeRunner(package_path, manifest, backend, device)
-    elif runner_type == "two_phase":
-        return TwoPhaseRunner(package_path, manifest, backend, device)
+    elif runner_type == "kv_cache":
+        return KVCacheRunner(package_path, manifest, backend, device)
     else:
         raise ValueError(f"Unknown runner type: {runner_type!r}")

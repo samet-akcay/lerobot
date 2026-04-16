@@ -93,7 +93,7 @@ class TestManifestSchema:
         assert loaded.policy.source.repo_id == "lerobot/act_aloha"
         assert loaded.is_action_chunking
         assert not loaded.is_iterative
-        assert not loaded.is_two_phase
+        assert not loaded.is_kv_cache
         assert loaded.model.runner["type"] == "action_chunking"
         assert loaded.model.runner["chunk_size"] == 100
         assert loaded.model.artifacts["model"] == "artifacts/model.onnx"
@@ -147,7 +147,7 @@ class TestManifestSchema:
         assert loaded.model.runner["action_dim"] == 6
         assert loaded.model.runner["beta_start"] == 0.0001
 
-    def test_two_phase_roundtrip(self, tmp_path: Path):
+    def test_kv_cache_roundtrip(self, tmp_path: Path):
         from lerobot.export.manifest import (
             Manifest,
             ModelConfig,
@@ -159,7 +159,7 @@ class TestManifestSchema:
             model=ModelConfig(
                 n_obs_steps=1,
                 runner={
-                    "type": "two_phase",
+                    "type": "kv_cache",
                     "chunk_size": 50,
                     "n_action_steps": 50,
                     "action_dim": 32,
@@ -182,7 +182,7 @@ class TestManifestSchema:
 
         loaded = Manifest.load(manifest_path)
 
-        assert loaded.is_two_phase
+        assert loaded.is_kv_cache
         assert loaded.model.runner["num_layers"] == 18
         assert loaded.model.runner["scheduler"] == "euler"
         assert loaded.model.artifacts["encoder"] == "artifacts/encoder.onnx"
@@ -264,7 +264,7 @@ class TestManifestSchema:
         assert m.runner_type == "iterative"
         assert m.is_iterative
         assert not m.is_action_chunking
-        assert not m.is_two_phase
+        assert not m.is_kv_cache
 
 
 class TestNormalizer:
@@ -330,10 +330,17 @@ class TestNormalizer:
         save_stats_safetensors(stats, stats_path)
 
         preprocessors = [
-            ProcessorSpec(type="normalize", mode="mean_std", artifact="stats.safetensors", features=["observation.state"])
+            ProcessorSpec(
+                type="normalize",
+                mode="mean_std",
+                artifact="stats.safetensors",
+                features=["observation.state"],
+            )
         ]
         postprocessors = [
-            ProcessorSpec(type="denormalize", mode="mean_std", artifact="stats.safetensors", features=["action"])
+            ProcessorSpec(
+                type="denormalize", mode="mean_std", artifact="stats.safetensors", features=["action"]
+            )
         ]
 
         normalizer = Normalizer.from_specs(preprocessors, postprocessors, tmp_path)

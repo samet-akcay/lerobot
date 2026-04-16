@@ -328,7 +328,7 @@ class Manifest:
 
     - ``action_chunking`` — single forward pass with action chunk queue
     - ``iterative`` — multi-step denoising / flow-matching
-    - ``two_phase`` — encode once, then iterative denoise
+    - ``kv_cache`` — encode once, then iterative denoise
     """
 
     policy: PolicyInfo
@@ -357,8 +357,8 @@ class Manifest:
         return self.runner_type == "iterative"
 
     @property
-    def is_two_phase(self) -> bool:
-        return self.runner_type == "two_phase"
+    def is_kv_cache(self) -> bool:
+        return self.runner_type == "kv_cache"
 
     # -- validation ------------------------------------------------------
 

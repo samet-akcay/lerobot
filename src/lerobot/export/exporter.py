@@ -95,7 +95,7 @@ def export_policy(
     # ---- Export model artifacts -----------------------------------------
 
     two_phase_extra: dict[str, Any] = {}
-    if inference_type == "two_phase":
+    if inference_type == "kv_cache":
         if backend != "onnx":
             raise ValueError(f"Unsupported backend for two-phase export: {backend}")
         artifacts, two_phase_extra = _export_two_phase_onnx(
@@ -167,8 +167,8 @@ def export_policy(
 
 
 def _detect_inference_type(policy: PreTrainedPolicy) -> str:
-    """Detect inference type: ``'action_chunking'``, ``'iterative'``, or ``'two_phase'``."""
-    valid_types = {"action_chunking", "iterative", "two_phase"}
+    """Detect inference type: ``'action_chunking'``, ``'iterative'``, or ``'kv_cache'``."""
+    valid_types = {"action_chunking", "iterative", "kv_cache"}
 
     if hasattr(policy, "get_inference_type"):
         declared = policy.get_inference_type()
@@ -184,7 +184,7 @@ def _detect_inference_type(policy: PreTrainedPolicy) -> str:
     name = policy.__class__.__name__.lower()
 
     if "pi0" in name or "smolvla" in name:
-        return "two_phase"
+        return "kv_cache"
 
     for pattern in ("diffusion", "flow"):
         if pattern in name:
@@ -593,7 +593,7 @@ def _build_manifest(
     elif inference_type == "iterative":
         runner.update(_build_iterative_runner_config(policy))
 
-    elif inference_type == "two_phase":
+    elif inference_type == "kv_cache":
         runner.update(two_phase_extra)
         runner["n_action_steps"] = two_phase_extra.get("chunk_size", 50)
 
