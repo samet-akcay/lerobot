@@ -912,7 +912,7 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
 
 
 class PI05EncoderModule(nn.Module):
-    """ONNX-exportable encoder for the PI05 two-phase pipeline.
+    """ONNX-exportable encoder for the PI05 KV-cache pipeline.
 
     Wraps embed_prefix() + VLM forward with use_cache=True, flattening
     the KV cache into individual tensors for ONNX output.
@@ -1097,17 +1097,17 @@ class PI05Policy(PreTrainedPolicy):
         self.reset()
 
     # ------------------------------------------------------------------
-    # Export protocol: ExportableTwoPhase
+    # Export protocol: ExportableKVCache
     # ------------------------------------------------------------------
 
     def get_inference_type(self) -> str:
-        return "two_phase"
+        return "kv_cache"
 
-    def get_two_phase_export_config(self):
-        from lerobot.export.protocols import TwoPhaseExportConfig
+    def get_kv_cache_export_config(self):
+        from lerobot.export.protocols import KVCacheExportConfig
 
         gemma_cfg = get_gemma_config(self.config.paligemma_variant)
-        return TwoPhaseExportConfig(
+        return KVCacheExportConfig(
             num_layers=gemma_cfg.depth,
             num_kv_heads=gemma_cfg.num_kv_heads,
             head_dim=gemma_cfg.head_dim,

@@ -22,7 +22,7 @@ the exporter, each policy provides its own export modules.
 Protocol hierarchy:
 - ExportableSinglePhase: For single-pass policies (ACT, VQ-BeT) that output actions directly
 - ExportableIterative: For iterative policies (Diffusion) with denoise step pattern
-- ExportableTwoPhase: For VLA policies (PI0, SmolVLA) with encode + denoise pattern
+- ExportableKVCache: For VLA policies (PI0, SmolVLA) with encode + denoise pattern
 
 Each protocol enables policies to encapsulate their own export logic, making
 the export system extensible without modifying the exporter itself.
@@ -63,10 +63,10 @@ class IterativeExportConfig:
 
 
 @dataclass
-class TwoPhaseExportConfig:
-    """Configuration for two-phase (VLA) export.
+class KVCacheExportConfig:
+    """Configuration for KV-cache (VLA) export.
 
-    Captures architecture-specific information needed to export a two-phase
+    Captures architecture-specific information needed to export a KV-cache
     policy and reconstruct the KV cache at runtime.
     """
 
@@ -85,10 +85,10 @@ class TwoPhaseExportConfig:
 
 
 @runtime_checkable
-class ExportableTwoPhase(Protocol):
-    """Protocol for two-phase policies (VLAs like PI0, SmolVLA).
+class ExportableKVCache(Protocol):
+    """Protocol for KV-cache policies (VLAs like PI0, SmolVLA).
 
-    Two-phase policies use:
+    KV-cache policies use:
     1. Encoder phase: Process images/language/state → KV cache
     2. Denoise phase: Iteratively denoise actions using cached KV
 
@@ -96,7 +96,7 @@ class ExportableTwoPhase(Protocol):
     external wrapper classes.
     """
 
-    def get_two_phase_export_config(self) -> TwoPhaseExportConfig:
+    def get_kv_cache_export_config(self) -> KVCacheExportConfig:
         """Return export configuration with architecture details."""
         ...
 
@@ -164,9 +164,9 @@ class ExportableTwoPhase(Protocol):
         ...
 
 
-def is_two_phase_exportable(policy) -> bool:
-    """Check if a policy implements ExportableTwoPhase."""
-    return isinstance(policy, ExportableTwoPhase)
+def is_kv_cache_exportable(policy) -> bool:
+    """Check if a policy implements ExportableKVCache."""
+    return isinstance(policy, ExportableKVCache)
 
 
 @runtime_checkable

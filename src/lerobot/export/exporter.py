@@ -94,13 +94,11 @@ def export_policy(
 
     # ---- Export model artifacts -----------------------------------------
 
-    two_phase_extra: dict[str, Any] = {}
+    kv_cache_extra: dict[str, Any] = {}
     if inference_type == "kv_cache":
         if backend != "onnx":
-            raise ValueError(f"Unsupported backend for two-phase export: {backend}")
-        artifacts, two_phase_extra = _export_two_phase_onnx(
-            policy, artifacts_dir, example_batch, opset_version
-        )
+            raise ValueError(f"Unsupported backend for kv-cache export: {backend}")
+        artifacts, kv_cache_extra = _export_kv_cache_onnx(policy, artifacts_dir, example_batch, opset_version)
     elif backend == "onnx":
         model_path = artifacts_dir / "model.onnx"
         _export_onnx(policy, model_path, example_batch, opset_version, inference_type)
@@ -153,7 +151,7 @@ def export_policy(
         artifacts=artifacts,
         preprocessors=preprocessors,
         postprocessors=postprocessors,
-        two_phase_extra=two_phase_extra,
+        kv_cache_extra=kv_cache_extra,
     )
 
     manifest.save(output_dir / "manifest.json")
@@ -398,7 +396,7 @@ def _create_iterative_wrapper(
 
 
 # ---------------------------------------------------------------------------
-# ONNX export (two-phase)
+# ONNX export (kv-cache)
 # ---------------------------------------------------------------------------
 
 
@@ -458,18 +456,18 @@ def _fix_onnx_double_to_float(onnx_path: Path) -> None:
         onnx.save(model, str(onnx_path))
 
 
-def _export_two_phase_onnx(
+def _export_kv_cache_onnx(
     policy: PreTrainedPolicy,
     artifacts_dir: Path,
     example_batch: dict[str, Tensor],
     opset_version: int,
 ) -> tuple[dict[str, str], dict[str, Any]]:
-    """Export a two-phase VLA policy to ONNX.
+    """Export a KV-cache VLA policy to ONNX.
 
     Returns:
         Tuple of (artifacts dict, extra runner params dict).
     """
-    from .protocols import is_two_phase_exportable
+    from .protocols import is_kv_cache_exportable
 
     policy.eval()
     device = next(policy.parameters()).device
@@ -478,10 +476,10 @@ def _export_two_phase_onnx(
     if not is_pi0:
         policy = policy.float()
 
-    if not is_two_phase_exportable(policy):
-        raise ValueError(f"Two-phase policy {policy.__class__.__name__} must implement ExportableTwoPhase.")
+    if not is_kv_cache_exportable(policy):
+        raise ValueError(f"KV-cache policy {policy.__class__.__name__} must implement ExportableKVCache.")
 
-    export_config = policy.get_two_phase_export_config()
+    export_config = policy.get_kv_cache_export_config()
     num_layers = export_config.num_layers
     num_kv_heads = export_config.num_kv_heads
     head_dim = export_config.head_dim
@@ -547,7 +545,7 @@ def _export_two_phase_onnx(
         "denoise": "artifacts/denoise.onnx",
     }
 
-    two_phase_extra = {
+    kv_cache_extra = {
         "num_inference_steps": num_steps,
         "scheduler": "euler",
         "action_dim": action_dim,
@@ -559,7 +557,7 @@ def _export_two_phase_onnx(
         "state_dim": export_config.state_dim,
     }
 
-    return artifacts, two_phase_extra
+    return artifacts, kv_cache_extra
 
 
 # ---------------------------------------------------------------------------
@@ -574,7 +572,7 @@ def _build_manifest(
     artifacts: dict[str, str],
     preprocessors: list[ProcessorSpec],
     postprocessors: list[ProcessorSpec],
-    two_phase_extra: dict[str, Any],
+    kv_cache_extra: dict[str, Any],
 ) -> Manifest:
     """Build the converged policy_package manifest."""
     config = policy.config
@@ -594,8 +592,8 @@ def _build_manifest(
         runner.update(_build_iterative_runner_config(policy))
 
     elif inference_type == "kv_cache":
-        runner.update(two_phase_extra)
-        runner["n_action_steps"] = two_phase_extra.get("chunk_size", 50)
+        runner.update(kv_cache_extra)
+        runner["n_action_steps"] = kv_cache_extra.get("chunk_size", 50)
 
     # Build model config
     n_obs_steps = getattr(config, "n_obs_steps", 1)
