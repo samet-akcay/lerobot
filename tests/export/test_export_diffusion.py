@@ -187,7 +187,7 @@ class TestDiffusionExecuTorch:
 
         assert (package_path / "manifest.json").exists()
         assert (package_path / "artifacts" / "model.pte").exists()
-        assert (package_path / "artifacts" / "metadata.yaml").exists()
+        assert (package_path / "artifacts" / "io_spec.yaml").exists()
 
     @require_executorch
     @pytest.mark.slow
