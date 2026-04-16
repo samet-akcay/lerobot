@@ -249,13 +249,13 @@ class SmolVLAPolicy(PreTrainedPolicy):
         self.reset()
 
     def get_inference_type(self) -> str:
-        return "two_phase"
+        return "kv_cache"
 
-    def get_two_phase_export_config(self):
-        from lerobot.export.protocols import TwoPhaseExportConfig
+    def get_kv_cache_export_config(self):
+        from lerobot.export.protocols import KVCacheExportConfig
 
         vlm_config = self.model.vlm_with_expert.vlm.config.text_config
-        return TwoPhaseExportConfig(
+        return KVCacheExportConfig(
             num_layers=self.model.vlm_with_expert.num_vlm_layers,
             num_kv_heads=vlm_config.num_key_value_heads,
             head_dim=vlm_config.head_dim,
