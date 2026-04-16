@@ -60,7 +60,7 @@ def get_runtime_adapter(adapter_name: str, model_path: Path, device: str = "cpu"
     """Factory function to get the appropriate runtime adapter.
 
     Args:
-        adapter_name: Name of the runtime adapter ("onnx" or "openvino").
+        adapter_name: Name of the runtime adapter ("onnx", "openvino", or "executorch").
         model_path: Path to the model file.
         device: Device for inference ("cpu", "cuda", "cuda:0").
 
@@ -78,8 +78,14 @@ def get_runtime_adapter(adapter_name: str, model_path: Path, device: str = "cpu"
         from .openvino import OpenVINORuntimeAdapter
 
         adapter = cast(object, OpenVINORuntimeAdapter(model_path, device))
+    elif adapter_name == "executorch":
+        from .executorch import ExecuTorchRuntimeAdapter
+
+        adapter = cast(object, ExecuTorchRuntimeAdapter(model_path, device))
     else:
-        raise ValueError(f"Unsupported runtime adapter: {adapter_name}. Supported: onnx, openvino")
+        raise ValueError(
+            f"Unsupported runtime adapter: {adapter_name}. Supported: onnx, openvino, executorch"
+        )
 
     if not isinstance(adapter, RuntimeAdapter):
         raise TypeError(f"Runtime adapter '{adapter_name}' must implement the RuntimeAdapter protocol.")

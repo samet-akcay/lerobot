@@ -85,6 +85,8 @@ def _detect_backend(manifest: Manifest) -> str:
         return "onnx"
     elif first_artifact.endswith(".xml"):
         return "openvino"
+    elif first_artifact.endswith(".pte"):
+        return "executorch"
     else:
         return "onnx"
 
@@ -510,7 +512,7 @@ def create_runner(
 
     Args:
         package_path: Path to the policy package directory.
-        backend: Runtime backend (``"onnx"`` or ``"openvino"``).
+        backend: Runtime backend (``"onnx"``, ``"openvino"``, or ``"executorch"``).
             Auto-detected from artifacts if ``None``.
         device: Device for inference.
 
