@@ -15,10 +15,8 @@
 # limitations under the License.
 """LeRobot Policy Export module.
 
-Export LeRobot policies to portable ``policy_package`` format (ONNX, OpenVINO,
+Export LeRobot policies to portable format (ONNX, OpenVINO,
 ExecuTorch) for inference without the full training stack.
-
-The manifest format is the converged schema shared by LeRobot and PhysicalAI.
 
 Example::
 
@@ -35,7 +33,6 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from .exporter import export_policy
-from .manifest import Manifest
 from .policy import ExportedPolicy
 
 if TYPE_CHECKING:
@@ -65,5 +62,4 @@ __all__ = [
     "export_policy",
     "load_exported_policy",
     "ExportedPolicy",
-    "Manifest",
 ]
