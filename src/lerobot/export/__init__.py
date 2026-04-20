@@ -37,6 +37,7 @@ from . import (
     runners as _runners,  # noqa: F401
 )
 from .exporter import export_policy
+from .manifest import Manifest
 from .policy import ExportedPolicy
 
 if TYPE_CHECKING:
@@ -66,4 +67,5 @@ __all__ = [
     "export_policy",
     "load_exported_policy",
     "ExportedPolicy",
+    "Manifest",
 ]

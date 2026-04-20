@@ -93,17 +93,6 @@ def skip_if_no_cuda():
         pytest.skip("CUDA not available")
 
 
-def skip_if_pi0_transformers_unavailable():
-    """Skip test if transformers is not importable.
-
-    Historically this gate required a patched ``fix/lerobot_openpi`` Transformers
-    build with SigLIP replace hooks. Stock ``transformers==5.3.0`` (LeRobot's
-    pinned version) provides everything PI0/PI05 need at runtime, so this is now
-    only a defensive importorskip.
-    """
-    pytest.importorskip("transformers")
-
-
 def to_numpy(batch: dict[str, torch.Tensor]) -> dict[str, np.ndarray]:
     """Convert a batch of PyTorch tensors to numpy arrays."""
     return {k: v.detach().cpu().numpy() for k, v in batch.items()}
@@ -287,7 +276,7 @@ def create_smolvla_policy_and_batch(device: str = "cuda"):
 
 def create_pi0_policy_and_batch(device: str = "cuda"):
     """Create a PI0 policy and example batch for testing."""
-    skip_if_pi0_transformers_unavailable()
+    pytest.importorskip("transformers")
     skip_if_no_cuda()
 
     from lerobot.configs.types import FeatureType, NormalizationMode, PolicyFeature
@@ -348,7 +337,7 @@ def create_pi05_policy_and_batch(device: str = "cuda"):
 
     PI05 differs from PI0: no state input is used during inference.
     """
-    skip_if_pi0_transformers_unavailable()
+    pytest.importorskip("transformers")
     skip_if_no_cuda()
 
     from lerobot.configs.types import FeatureType, NormalizationMode, PolicyFeature

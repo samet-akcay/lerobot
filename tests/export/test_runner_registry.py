@@ -32,7 +32,6 @@ from tests.export.conftest import (
     create_pi0_policy_and_batch,
     create_pi05_policy_and_batch,
     create_smolvla_policy_and_batch,
-    skip_if_pi0_transformers_unavailable,
 )
 
 
@@ -51,13 +50,13 @@ def test_select_runner_returns_expected_class_for_diffusion() -> None:
 
 
 def test_select_runner_returns_expected_class_for_pi0() -> None:
-    skip_if_pi0_transformers_unavailable()
+    pytest.importorskip("transformers")
     policy, _ = create_pi0_policy_and_batch(device="cuda")
     assert _select_runner(policy) is KVCacheRunner
 
 
 def test_select_runner_returns_expected_class_for_pi05() -> None:
-    skip_if_pi0_transformers_unavailable()
+    pytest.importorskip("transformers")
     policy, _ = create_pi05_policy_and_batch(device="cuda")
     assert _select_runner(policy) is KVCacheRunner
 
@@ -95,7 +94,7 @@ def test_runner_exports_have_structural_invariants(
     expected_names: list[str],
 ) -> None:
     if factory in {create_pi0_policy_and_batch, create_pi05_policy_and_batch}:
-        skip_if_pi0_transformers_unavailable()
+        pytest.importorskip("transformers")
 
     policy, batch = factory(**kwargs)
     matching = [runner for runner in RUNNERS if runner.matches(policy)]
@@ -136,7 +135,7 @@ def test_iterative_runner_export_shape() -> None:
 
 
 def test_kv_cache_runner_export_shape() -> None:
-    skip_if_pi0_transformers_unavailable()
+    pytest.importorskip("transformers")
     policy, batch = create_pi0_policy_and_batch(device="cuda")
     modules, _ = KVCacheRunner.export(policy, batch)
 

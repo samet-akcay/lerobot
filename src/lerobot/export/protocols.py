@@ -74,10 +74,8 @@ class KVCacheExportConfig:
 
     chunk_size: int
     action_dim: int
-    state_dim: int
+    state_dim: int | None
     num_steps: int
-
-    state_in_denoise: bool = True
 
     input_mapping: dict[str, str] = field(default_factory=dict)
 

@@ -1153,7 +1153,6 @@ class PI0Policy(PreTrainedPolicy):
             action_dim=self.config.max_action_dim,
             state_dim=self.config.max_state_dim,
             num_steps=self.config.num_inference_steps,
-            state_in_denoise=True,
         )
 
     def get_export_modules(self) -> dict[str, nn.Module]:

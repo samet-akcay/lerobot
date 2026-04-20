@@ -30,7 +30,7 @@ from . import (
 from ._package_utils import (
     build_hardware_config,
     generate_example_batch,
-    get_normalization_mode,
+    get_normalization_groups,
     get_normalized_input_features,
     get_policy_stats,
     save_policy_config,
@@ -67,11 +67,12 @@ def export_policy(
 
     runner_cls = _select_runner(policy)
     modules, runner_cfg = runner_cls.export(policy, example_batch)
-    backend_impl = BACKENDS.get(backend)
+    serialization_backend = "onnx" if backend == "openvino" else backend
+    backend_impl = BACKENDS.get(serialization_backend)
     if backend_impl is None:
-        raise ValueError(f"Unknown backend: {backend!r}. Known: {sorted(BACKENDS)}")
+        raise ValueError(f"Unknown backend: {backend!r}. Known: {sorted(BACKENDS) + ['openvino']}")
     if backend_impl.runtime_only:
-        raise ValueError("OpenVINO is runtime_only; export with backend='onnx' first")
+        raise ValueError(f"Backend {serialization_backend!r} is runtime-only and cannot serialize a model.")
     artifacts = backend_impl.serialize(modules, artifacts_dir, opset_version=opset_version)
 
     preprocessors: list[ProcessorSpec] = []
@@ -81,25 +82,25 @@ def export_policy(
         if stats:
             stats_path = artifacts_dir / "stats.safetensors"
             save_stats_safetensors(stats, stats_path)
-            mode = get_normalization_mode(policy)
             input_features = get_normalized_input_features(policy)
-            if input_features:
+            for mode, feats in get_normalization_groups(policy, input_features):
                 preprocessors.append(
                     ProcessorSpec(
                         type="normalize",
                         mode=mode,
                         artifact="artifacts/stats.safetensors",
-                        features=input_features,
+                        features=feats,
                     )
                 )
-            postprocessors.append(
-                ProcessorSpec(
-                    type="denormalize",
-                    mode=mode,
-                    artifact="artifacts/stats.safetensors",
-                    features=["action"],
+            for mode, feats in get_normalization_groups(policy, ["action"]):
+                postprocessors.append(
+                    ProcessorSpec(
+                        type="denormalize",
+                        mode=mode,
+                        artifact="artifacts/stats.safetensors",
+                        features=feats,
+                    )
                 )
-            )
 
     save_policy_config(policy, assets_dir / "config.json")
     runner_block = {"type": runner_cls.type, **runner_cfg}

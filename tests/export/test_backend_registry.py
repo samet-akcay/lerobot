@@ -52,10 +52,11 @@ def test_openvino_backend_is_runtime_only() -> None:
     assert BACKENDS["openvino"].runtime_only is True
 
 
-def test_export_rejects_runtime_only_backend(tmp_path: Path) -> None:
+def test_export_accepts_openvino_backend_alias(tmp_path: Path) -> None:
     policy, batch = create_act_policy_and_batch()
-    with pytest.raises(ValueError, match="OpenVINO is runtime_only; export with backend='onnx' first"):
-        export_policy(policy, tmp_path / "openvino_export", backend="openvino", example_batch=batch)
+    out = export_policy(policy, tmp_path / "openvino_export", backend="openvino", example_batch=batch)
+    assert (out / "manifest.json").exists()
+    assert any(out.glob("artifacts/*.onnx"))
 
 
 def test_toy_runner_and_backend_work_without_core_edits(tmp_path: Path, restore_registries: None) -> None:
@@ -63,6 +64,7 @@ def test_toy_runner_and_backend_work_without_core_edits(tmp_path: Path, restore_
         n_obs_steps = 1
         repo_id = None
         revision = None
+        max_action_dim = 1
 
     class AddOne(nn.Module):
         def forward(self, x: torch.Tensor) -> torch.Tensor:

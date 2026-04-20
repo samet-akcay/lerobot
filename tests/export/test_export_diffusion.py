@@ -203,6 +203,55 @@ class TestDiffusionExport:
         )
 
 
+class TestDiffusionNormalization:
+    @pytest.mark.slow
+    def test_per_feature_normalization_modes_in_manifest(self, tmp_path: Path):
+        import json
+
+        policy, batch = create_diffusion_policy_and_batch()
+        policy.config.stats = {
+            "observation.state": {
+                "min": [0.0] * 6,
+                "max": [1.0] * 6,
+                "mean": [0.5] * 6,
+                "std": [0.1] * 6,
+            },
+            "observation.images.top": {
+                "mean": [[[0.5]], [[0.5]], [[0.5]]],
+                "std": [[[0.1]], [[0.1]], [[0.1]]],
+            },
+            "action": {
+                "min": [0.0] * 6,
+                "max": [1.0] * 6,
+                "mean": [0.5] * 6,
+                "std": [0.1] * 6,
+            },
+        }
+
+        package_path = policy.export(
+            tmp_path / "diffusion_norm",
+            backend="onnx",
+            example_batch=batch,
+            include_normalization=True,
+        )
+        manifest = json.loads((package_path / "manifest.json").read_text())
+
+        preprocessors = manifest["model"]["preprocessors"]
+        postprocessors = manifest["model"]["postprocessors"]
+
+        pre_by_mode = {p["mode"]: set(p["features"]) for p in preprocessors}
+        assert pre_by_mode.get("MEAN_STD") == {"observation.images.top"}, (
+            f"VISUAL must use MEAN_STD per Diffusion's normalization_mapping; got {pre_by_mode}"
+        )
+        assert pre_by_mode.get("MIN_MAX") == {"observation.state"}, (
+            f"STATE must use MIN_MAX per Diffusion's normalization_mapping; got {pre_by_mode}"
+        )
+
+        assert len(postprocessors) == 1
+        assert postprocessors[0]["mode"] == "MIN_MAX"
+        assert postprocessors[0]["features"] == ["action"]
+
+
 class TestDiffusionRuntime:
     @pytest.mark.slow
     def test_from_exported_loads_user_facing_policy(self, tmp_path: Path):

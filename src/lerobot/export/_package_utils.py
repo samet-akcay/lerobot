@@ -83,7 +83,10 @@ def get_action_dim(config: Any) -> int:
         return config.max_action_dim
     if hasattr(config, "action_feature") and config.action_feature is not None:
         return config.action_feature.shape[0]
-    return 14
+    raise ValueError(
+        f"Cannot determine action dimension for config of type {type(config).__name__}: "
+        "neither `max_action_dim` nor `action_feature` is set."
+    )
 
 
 def get_policy_stats(policy: PreTrainedPolicy) -> dict[str, dict[str, Any]] | None:
@@ -96,16 +99,54 @@ def get_policy_stats(policy: PreTrainedPolicy) -> dict[str, dict[str, Any]] | No
     return None
 
 
-def get_normalization_mode(policy: PreTrainedPolicy) -> str:
-    return "mean_std"
+def _feature_key_to_type(policy: PreTrainedPolicy, feature_key: str) -> str | None:
+    cfg = policy.config
+    if feature_key == "observation.state" and getattr(cfg, "robot_state_feature", None):
+        return "STATE"
+    if feature_key == "observation.environment_state" and getattr(cfg, "env_state_feature", None):
+        return "ENV"
+    image_features = getattr(cfg, "image_features", None) or {}
+    if feature_key in image_features:
+        return "VISUAL"
+    if feature_key == "action":
+        return "ACTION"
+    return None
+
+
+def get_normalization_groups(
+    policy: PreTrainedPolicy, feature_keys: list[str]
+) -> list[tuple[str, list[str]]]:
+    """Group feature keys by their normalization mode as declared in ``config.normalization_mapping``.
+
+    Returns a list of ``(mode_str, [feature_keys])`` tuples. Features without a mapping or with
+    ``IDENTITY`` are dropped (no normalization needed).
+    """
+    mapping = getattr(policy.config, "normalization_mapping", {}) or {}
+    groups: dict[str, list[str]] = {}
+    for key in feature_keys:
+        ftype = _feature_key_to_type(policy, key)
+        if ftype is None:
+            continue
+        mode = mapping.get(ftype)
+        if mode is None:
+            continue
+        mode_value = mode.value if hasattr(mode, "value") else str(mode)
+        if mode_value == "IDENTITY":
+            continue
+        groups.setdefault(mode_value, []).append(key)
+    return list(groups.items())
 
 
 def get_normalized_input_features(policy: PreTrainedPolicy) -> list[str]:
-    return (
-        ["observation.state"]
-        if hasattr(policy.config, "robot_state_feature") and policy.config.robot_state_feature
-        else []
-    )
+    cfg = policy.config
+    out: list[str] = []
+    if getattr(cfg, "robot_state_feature", None):
+        out.append("observation.state")
+    if getattr(cfg, "env_state_feature", None):
+        out.append("observation.environment_state")
+    image_features = getattr(cfg, "image_features", None) or {}
+    out.extend(image_features.keys())
+    return out
 
 
 def save_policy_config(policy: PreTrainedPolicy, path: Path) -> None:

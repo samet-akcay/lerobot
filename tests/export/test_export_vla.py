@@ -31,7 +31,6 @@ from tests.export.conftest import (  # noqa: E402
     create_pi05_policy_and_batch,
     create_smolvla_policy_and_batch,
     require_executorch,
-    skip_if_pi0_transformers_unavailable,
     to_numpy,
 )
 
@@ -39,7 +38,7 @@ from tests.export.conftest import (  # noqa: E402
 class TestPI0Export:
     @pytest.mark.slow
     def test_export_creates_valid_package(self, tmp_path: Path):
-        skip_if_pi0_transformers_unavailable()
+        pytest.importorskip("transformers")
         from lerobot.export import export_policy
         from lerobot.export.manifest import Manifest
 
@@ -63,7 +62,7 @@ class TestPI0Export:
 
     @pytest.mark.slow
     def test_onnx_numerical_parity(self, tmp_path: Path):
-        skip_if_pi0_transformers_unavailable()
+        pytest.importorskip("transformers")
         from lerobot.export import export_policy, load_exported_policy
         from lerobot.utils.constants import OBS_LANGUAGE_ATTENTION_MASK, OBS_LANGUAGE_TOKENS, OBS_STATE
 
@@ -100,17 +99,19 @@ class TestPI0Export:
         if pytorch_np.ndim == 3 and pytorch_np.shape[0] == 1:
             pytorch_np = pytorch_np[0]
 
+        # Empirical CPU eager↔ONNX floor for PI0 kv_cache: max|abs|≈1.0e-6 over 3 denoise
+        # steps. 1e-5 leaves margin for CPU↔GPU kernel differences in CI.
         assert_numerical_parity(
             onnx_output,
             pytorch_np,
-            rtol=1e-2,
-            atol=1e-2,
+            rtol=1e-5,
+            atol=1e-5,
             msg="PI0 ONNX output does not match PyTorch output",
         )
 
     @pytest.mark.slow
     def test_openvino_numerical_parity(self, tmp_path: Path):
-        skip_if_pi0_transformers_unavailable()
+        pytest.importorskip("transformers")
         pytest.importorskip("openvino")
         from lerobot.export import export_policy, load_exported_policy
         from lerobot.utils.constants import OBS_STATE
@@ -149,7 +150,7 @@ class TestPI0Export:
 class TestPI05Export:
     @pytest.mark.slow
     def test_export_creates_valid_package(self, tmp_path: Path):
-        skip_if_pi0_transformers_unavailable()
+        pytest.importorskip("transformers")
         from lerobot.export import export_policy
         from lerobot.export.manifest import Manifest
 
@@ -173,7 +174,7 @@ class TestPI05Export:
 
     @pytest.mark.slow
     def test_onnx_numerical_parity(self, tmp_path: Path):
-        skip_if_pi0_transformers_unavailable()
+        pytest.importorskip("transformers")
         from lerobot.export import export_policy, load_exported_policy
         from lerobot.utils.constants import OBS_LANGUAGE_ATTENTION_MASK, OBS_LANGUAGE_TOKENS
 
@@ -208,17 +209,19 @@ class TestPI05Export:
         if pytorch_np.ndim == 3 and pytorch_np.shape[0] == 1:
             pytorch_np = pytorch_np[0]
 
+        # Empirical CPU eager↔ONNX floor for PI05 kv_cache: max|abs|≈7.2e-7 over 10 denoise
+        # steps. 1e-5 leaves margin for CPU↔GPU kernel differences in CI.
         assert_numerical_parity(
             onnx_output,
             pytorch_np,
-            rtol=1e-2,
-            atol=1e-2,
+            rtol=1e-5,
+            atol=1e-5,
             msg="PI05 ONNX output does not match PyTorch output",
         )
 
     @pytest.mark.slow
     def test_openvino_numerical_parity(self, tmp_path: Path):
-        skip_if_pi0_transformers_unavailable()
+        pytest.importorskip("transformers")
         pytest.importorskip("openvino")
         from lerobot.export import export_policy, load_exported_policy
 
@@ -253,7 +256,7 @@ class TestPI05Export:
 
     @pytest.mark.slow
     def test_openvino_numerical_parity_with_pytorch(self, tmp_path: Path):
-        skip_if_pi0_transformers_unavailable()
+        pytest.importorskip("transformers")
         pytest.importorskip("openvino")
         from lerobot.export import export_policy, load_exported_policy
         from lerobot.utils.constants import OBS_LANGUAGE_ATTENTION_MASK, OBS_LANGUAGE_TOKENS
@@ -289,11 +292,12 @@ class TestPI05Export:
         if pytorch_np.ndim == 3 and pytorch_np.shape[0] == 1:
             pytorch_np = pytorch_np[0]
 
+        # OpenVINO loads the same ONNX serialization; floor matches PI05 ONNX (~7e-7).
         assert_numerical_parity(
             ov_output,
             pytorch_np,
-            rtol=1e-2,
-            atol=1e-2,
+            rtol=1e-5,
+            atol=1e-5,
             msg="PI05 OpenVINO output does not match PyTorch output",
         )
 
@@ -386,11 +390,13 @@ class TestSmolVLAExport:
         if pytorch_np.ndim == 3 and pytorch_np.shape[0] == 1:
             pytorch_np = pytorch_np[0]
 
+        # SmolVLA kv_cache parity: 1e-5 chosen conservatively (not yet empirically profiled
+        # like PI0/PI05). Tighten further once an empirical floor is measured.
         assert_numerical_parity(
             onnx_output,
             pytorch_np,
-            rtol=1e-2,
-            atol=1e-2,
+            rtol=1e-5,
+            atol=1e-5,
             msg="SmolVLA ONNX output does not match PyTorch output",
         )
 
@@ -437,7 +443,7 @@ class TestPI05ExecuTorch:
     @require_executorch
     @pytest.mark.slow
     def test_executorch_export_creates_valid_package(self, tmp_path: Path):
-        skip_if_pi0_transformers_unavailable()
+        pytest.importorskip("transformers")
         from lerobot.export import export_policy
 
         policy, batch = create_pi05_policy_and_batch(device="cuda")
@@ -461,10 +467,11 @@ class TestPI05ExecuTorch:
         """Exported ExecuTorch policy must match the torch policy on identical input.
 
         Tolerance is looser than ACT/Diffusion because kv_cache models accumulate
-        more fp32 rounding error across the denoise loop and transformer layers;
-        the value (1e-2) matches the existing torch↔ONNX tolerance for Pi05.
+        more fp32 rounding error across the denoise loop and transformer layers.
+        ExecuTorch runtime introduces additional kernel-level numerical drift vs ONNX;
+        1e-5 is conservative until an empirical floor is profiled on hardware.
         """
-        skip_if_pi0_transformers_unavailable()
+        pytest.importorskip("transformers")
         from lerobot.export import export_policy, load_exported_policy
         from lerobot.utils.constants import OBS_LANGUAGE_ATTENTION_MASK, OBS_LANGUAGE_TOKENS
 
@@ -502,15 +509,15 @@ class TestPI05ExecuTorch:
         assert_numerical_parity(
             et_output,
             pytorch_np,
-            rtol=1e-2,
-            atol=1e-2,
+            rtol=1e-5,
+            atol=1e-5,
             msg="PI05 ExecuTorch output does not match PyTorch output",
         )
 
     @require_executorch
     @pytest.mark.slow
     def test_executorch_numerical_parity_with_onnx(self, tmp_path: Path):
-        skip_if_pi0_transformers_unavailable()
+        pytest.importorskip("transformers")
         from lerobot.export import export_policy, load_exported_policy
 
         policy, batch = create_pi05_policy_and_batch(device="cuda")

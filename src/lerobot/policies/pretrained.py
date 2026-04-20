@@ -121,10 +121,15 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
         opset_version: int = 17,
         include_normalization: bool = True,
     ) -> Path:
-        """Export this policy as an OpenVINO-compatible policy package."""
+        """Export this policy as a policy package consumable by the OpenVINO runtime.
+
+        OpenVINO loads ONNX models natively, so the serialized artifacts on disk are
+        identical to those produced by :meth:`to_onnx`. The difference is the
+        ``backend`` recorded for runtime loading via :func:`load_exported_policy`.
+        """
         return self.export(
             output_dir,
-            backend="onnx",
+            backend="openvino",
             example_batch=example_batch,
             opset_version=opset_version,
             include_normalization=include_normalization,
