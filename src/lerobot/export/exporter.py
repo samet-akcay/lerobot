@@ -116,6 +116,7 @@ def export_policy(
             n_obs_steps=getattr(policy.config, "n_obs_steps", 1),
             runner=runner_block,
             artifacts=artifacts,
+            backend=backend,
             preprocessors=preprocessors or None,
             postprocessors=postprocessors or None,
         ),

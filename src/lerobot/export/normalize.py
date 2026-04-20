@@ -13,13 +13,12 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Normalizer for applying dataset statistics during inference.
+"""Runtime normalization for exported policies.
 
-Supports normalization modes:
-
-- ``mean_std`` (a.k.a. "standard"): ``(x - mean) / std``
-- ``min_max``: maps ``[min, max] → [-1, 1]``
-- ``identity``: passthrough
+Each feature is normalized independently according to the mode declared
+in its :class:`ProcessorSpec` (``mean_std``, ``min_max``, or
+``identity``). A single policy may mix modes across features — e.g.
+Diffusion uses ``min_max`` for state/action and ``mean_std`` for images.
 """
 
 from __future__ import annotations
@@ -34,7 +33,6 @@ if TYPE_CHECKING:
 
     from .manifest import ProcessorSpec
 
-# Map various mode names to canonical mode identifiers
 _MODE_ALIASES: dict[str, str] = {
     "mean_std": "mean_std",
     "standard": "mean_std",
@@ -43,28 +41,36 @@ _MODE_ALIASES: dict[str, str] = {
 }
 
 
-class Normalizer:
-    """Handles normalization and denormalization of inputs/outputs.
+def _canonical_mode(mode: str | None) -> str:
+    if mode is None:
+        return "mean_std"
+    key = str(mode).lower()
+    if key not in _MODE_ALIASES:
+        raise ValueError(
+            f"Unknown normalization mode: {mode!r}. Known modes: {sorted(set(_MODE_ALIASES.values()))}."
+        )
+    return _MODE_ALIASES[key]
 
-    Loads statistics from safetensors files and applies per-feature
-    transforms compatible with numpy arrays for runtime inference.
+
+class Normalizer:
+    """Applies per-feature normalization to inference inputs and outputs.
+
+    Features are registered individually with their canonical mode
+    (``mean_std``, ``min_max``, or ``identity``) and the safetensors
+    stats they should consult. Unknown features pass through unchanged.
     """
 
     def __init__(
         self,
-        mode: str,
+        input_specs: dict[str, str],
+        output_specs: dict[str, str],
         stats: dict[str, dict[str, NDArray[np.floating]]],
-        input_features: set[str],
-        output_features: set[str],
         eps: float = 1e-8,
     ) -> None:
-        self._mode = _MODE_ALIASES.get(mode, mode)
+        self._input_specs = {key: _canonical_mode(mode) for key, mode in input_specs.items()}
+        self._output_specs = {key: _canonical_mode(mode) for key, mode in output_specs.items()}
         self._stats = stats
-        self._input_features = input_features
-        self._output_features = output_features
         self._eps = eps
-
-    # -- factory methods -------------------------------------------------
 
     @classmethod
     def from_specs(
@@ -74,37 +80,47 @@ class Normalizer:
         package_path: Path | str,
         eps: float = 1e-8,
     ) -> Normalizer | None:
-        """Build a Normalizer from preprocessor/postprocessor specs.
-
-        Returns ``None`` if no normalize/denormalize specs are present.
-        """
         package_path = Path(package_path)
 
-        norm_spec = None
-        input_features: set[str] = set()
-        output_features: set[str] = set()
+        input_specs: dict[str, str] = {}
+        output_specs: dict[str, str] = {}
+        artifacts: set[str] = set()
 
         for spec in preprocessors or []:
-            if spec.type == "normalize":
-                norm_spec = spec
-                input_features.update(spec.features or [])
+            if spec.type != "normalize":
+                continue
+            mode = _canonical_mode(spec.mode)
+            for feature in spec.features or []:
+                input_specs[feature] = mode
+            if spec.artifact:
+                artifacts.add(spec.artifact)
 
         for spec in postprocessors or []:
-            if spec.type == "denormalize":
-                if norm_spec is None:
-                    norm_spec = spec
-                output_features.update(spec.features or [])
+            if spec.type != "denormalize":
+                continue
+            mode = _canonical_mode(spec.mode)
+            for feature in spec.features or []:
+                output_specs[feature] = mode
+            if spec.artifact:
+                artifacts.add(spec.artifact)
 
-        if norm_spec is None or not norm_spec.artifact:
+        if not input_specs and not output_specs:
             return None
 
-        stats_path = package_path / norm_spec.artifact
-        if not stats_path.exists():
+        if not artifacts:
             return None
 
-        mode = norm_spec.mode or "mean_std"
-        stats = _load_stats(stats_path)
-        return cls(mode, stats, input_features, output_features, eps)
+        stats: dict[str, dict[str, NDArray[np.floating]]] = {}
+        for artifact in artifacts:
+            stats_path = package_path / artifact
+            if not stats_path.exists():
+                raise FileNotFoundError(
+                    f"Normalization stats artifact not found: {stats_path}. "
+                    "The manifest declares normalization specs but the stats file is missing."
+                )
+            stats.update(_load_stats(stats_path))
+
+        return cls(input_specs, output_specs, stats, eps)
 
     @classmethod
     def from_safetensors(
@@ -115,27 +131,20 @@ class Normalizer:
         output_features: list[str] | None = None,
         eps: float = 1e-8,
     ) -> Normalizer:
-        """Load normalizer directly from a safetensors file."""
         stats = _load_stats(path)
-        return cls(
-            mode=mode,
-            stats=stats,
-            input_features=set(input_features or []),
-            output_features=set(output_features or []),
-            eps=eps,
-        )
-
-    # -- public API ------------------------------------------------------
+        canonical = _canonical_mode(mode)
+        input_specs = dict.fromkeys(input_features or [], canonical)
+        output_specs = dict.fromkeys(output_features or [], canonical)
+        return cls(input_specs, output_specs, stats, eps)
 
     def normalize_inputs(
         self,
         observation: dict[str, NDArray[np.floating]],
     ) -> dict[str, NDArray[np.floating]]:
-        """Apply normalization to input features."""
         result = dict(observation)
-        for key in self._input_features:
+        for key, mode in self._input_specs.items():
             if key in result and key in self._stats:
-                result[key] = self._apply_transform(result[key], key, inverse=False)
+                result[key] = self._apply_transform(result[key], key, mode, inverse=False)
         return result
 
     def denormalize_outputs(
@@ -143,28 +152,27 @@ class Normalizer:
         action: NDArray[np.floating],
         key: str = "action",
     ) -> NDArray[np.floating]:
-        """Apply denormalization to an output array."""
-        if key in self._output_features and key in self._stats:
-            return self._apply_transform(action, key, inverse=True)
-        return action
-
-    # -- internals -------------------------------------------------------
+        mode = self._output_specs.get(key)
+        if mode is None or key not in self._stats:
+            return action
+        return self._apply_transform(action, key, mode, inverse=True)
 
     def _apply_transform(
         self,
         tensor: NDArray[np.floating],
         key: str,
+        mode: str,
         *,
         inverse: bool = False,
     ) -> NDArray[np.floating]:
-        if self._mode == "identity" or key not in self._stats:
+        if mode == "identity" or key not in self._stats:
             return tensor
 
         stats = self._stats[key]
 
-        if self._mode == "mean_std":
+        if mode == "mean_std":
             return self._apply_mean_std(tensor, stats, inverse)
-        elif self._mode == "min_max":
+        if mode == "min_max":
             return self._apply_min_max(tensor, stats, inverse)
 
         return tensor
@@ -203,13 +211,7 @@ class Normalizer:
         return 2 * (tensor - min_val) / denom - 1
 
 
-# ---------------------------------------------------------------------------
-# Stats I/O
-# ---------------------------------------------------------------------------
-
-
 def _load_stats(path: Path | str) -> dict[str, dict[str, NDArray[np.floating]]]:
-    """Load stats from a safetensors file into a nested dict."""
     try:
         from safetensors.numpy import load_file
     except ImportError as e:
@@ -229,12 +231,6 @@ def save_stats_safetensors(
     stats: dict[str, dict[str, Any]],
     path: Path | str,
 ) -> None:
-    """Save normalization statistics to a safetensors file.
-
-    Args:
-        stats: Nested ``{feature: {stat_name: array}}`` dict.
-        path: Output path for the safetensors file.
-    """
     try:
         from safetensors.numpy import save_file
     except ImportError as e:

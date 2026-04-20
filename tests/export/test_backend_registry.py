@@ -219,6 +219,42 @@ def test_detect_backend_name_raises_for_unknown_suffix(tmp_path: Path) -> None:
         _detect_backend_name(manifest, tmp_path)
 
 
+def test_detect_backend_name_uses_manifest_backend_field(tmp_path: Path) -> None:
+    from lerobot.export.policy import _detect_backend_name
+
+    artifact_path = tmp_path / "model.onnx"
+    artifact_path.write_bytes(b"")
+    manifest = {
+        "model": {
+            "backend": "openvino",
+            "artifacts": {"model": "artifacts/model.onnx"},
+        }
+    }
+
+    assert _detect_backend_name(manifest, tmp_path) == "openvino"
+
+
+def test_detect_backend_name_rejects_unknown_declared_backend(tmp_path: Path) -> None:
+    from lerobot.export.policy import _detect_backend_name
+
+    manifest = {
+        "model": {
+            "backend": "does_not_exist",
+            "artifacts": {"model": "artifacts/model.onnx"},
+        }
+    }
+
+    with pytest.raises(ValueError, match="not registered"):
+        _detect_backend_name(manifest, tmp_path)
+
+
+def test_openvino_export_manifest_declares_backend(tmp_path: Path) -> None:
+    policy, batch = create_act_policy_and_batch()
+    out = export_policy(policy, tmp_path / "openvino_export", backend="openvino", example_batch=batch)
+    manifest = json.loads((out / "manifest.json").read_text())
+    assert manifest["model"]["backend"] == "openvino"
+
+
 def test_onnx_backend_serialize_raises_for_unknown_fixup(tmp_path: Path) -> None:
     pytest.importorskip("onnxruntime")
 

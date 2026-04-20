@@ -240,16 +240,73 @@ class TestDiffusionNormalization:
         postprocessors = manifest["model"]["postprocessors"]
 
         pre_by_mode = {p["mode"]: set(p["features"]) for p in preprocessors}
-        assert pre_by_mode.get("MEAN_STD") == {"observation.images.top"}, (
-            f"VISUAL must use MEAN_STD per Diffusion's normalization_mapping; got {pre_by_mode}"
+        assert pre_by_mode.get("mean_std") == {"observation.images.top"}, (
+            f"VISUAL must use mean_std per Diffusion's normalization_mapping; got {pre_by_mode}"
         )
-        assert pre_by_mode.get("MIN_MAX") == {"observation.state"}, (
-            f"STATE must use MIN_MAX per Diffusion's normalization_mapping; got {pre_by_mode}"
+        assert pre_by_mode.get("min_max") == {"observation.state"}, (
+            f"STATE must use min_max per Diffusion's normalization_mapping; got {pre_by_mode}"
         )
 
         assert len(postprocessors) == 1
-        assert postprocessors[0]["mode"] == "MIN_MAX"
+        assert postprocessors[0]["mode"] == "min_max"
         assert postprocessors[0]["features"] == ["action"]
+
+    @pytest.mark.slow
+    def test_normalizer_applies_per_feature_modes_at_runtime(self, tmp_path: Path):
+        import numpy as np
+
+        from lerobot.export.manifest import Manifest
+        from lerobot.export.normalize import Normalizer
+
+        policy, batch = create_diffusion_policy_and_batch()
+        policy.config.stats = {
+            "observation.state": {
+                "min": np.full((6,), -2.0, dtype=np.float32),
+                "max": np.full((6,), 2.0, dtype=np.float32),
+                "mean": np.zeros(6, dtype=np.float32),
+                "std": np.ones(6, dtype=np.float32),
+            },
+            "observation.images.top": {
+                "mean": np.full((3, 1, 1), 0.25, dtype=np.float32),
+                "std": np.full((3, 1, 1), 0.5, dtype=np.float32),
+                "min": np.zeros((3, 1, 1), dtype=np.float32),
+                "max": np.ones((3, 1, 1), dtype=np.float32),
+            },
+            "action": {
+                "min": np.full((6,), -1.0, dtype=np.float32),
+                "max": np.full((6,), 1.0, dtype=np.float32),
+                "mean": np.zeros(6, dtype=np.float32),
+                "std": np.ones(6, dtype=np.float32),
+            },
+        }
+
+        package_path = policy.export(
+            tmp_path / "diffusion_runtime_norm",
+            backend="onnx",
+            example_batch=batch,
+            include_normalization=True,
+        )
+
+        manifest = Manifest.load(package_path / "manifest.json")
+        normalizer = Normalizer.from_specs(
+            manifest.model.preprocessors,
+            manifest.model.postprocessors,
+            package_path,
+        )
+        assert normalizer is not None
+
+        state = np.full((1, 6), 1.0, dtype=np.float32)
+        image = np.full((1, 3, 4, 4), 0.75, dtype=np.float32)
+        normalized = normalizer.normalize_inputs(
+            {"observation.state": state, "observation.images.top": image}
+        )
+
+        np.testing.assert_allclose(normalized["observation.state"], 0.5, atol=1e-6)
+        np.testing.assert_allclose(normalized["observation.images.top"], 1.0, atol=1e-6)
+
+        action = np.full((6,), 0.5, dtype=np.float32)
+        recovered = normalizer.denormalize_outputs(action, key="action")
+        np.testing.assert_allclose(recovered, 0.5, atol=1e-6)
 
 
 class TestDiffusionRuntime:

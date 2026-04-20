@@ -21,7 +21,6 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
-import yaml
 
 from .base import register_backend, resolve_artifact_paths
 
@@ -147,6 +146,8 @@ def _write_io_spec_yaml(
     *,
     extras: dict[str, Any] | None = None,
 ) -> None:
+    import yaml
+
     payload: dict[str, Any] = {"input_names": input_names, "output_names": output_names}
     if extras:
         payload.update(extras)
@@ -155,6 +156,8 @@ def _write_io_spec_yaml(
 
 
 def _read_io_spec(model_path: Path) -> dict[str, list[str]]:
+    import yaml
+
     model_specific = model_path.parent / f"{model_path.stem}_io_spec.yaml"
     generic = model_path.parent / "io_spec.yaml"
     metadata_path = model_specific if model_specific.exists() else generic

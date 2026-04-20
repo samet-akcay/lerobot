@@ -94,14 +94,31 @@ class ExportedPolicy:
 
 
 def _detect_backend_name(manifest: dict[str, Any], artifacts_dir: Path) -> str:
+    declared = manifest["model"].get("backend")
+    if declared:
+        if declared not in BACKENDS:
+            raise ValueError(
+                f"Manifest declares backend={declared!r} but it is not registered. "
+                f"Registered backends: {sorted(BACKENDS)}."
+            )
+        return declared
+
     artifact_names = {Path(path).name for path in manifest["model"]["artifacts"].values()}
-    for backend_name, backend_impl in BACKENDS.items():
-        if any(
-            (artifacts_dir / artifact_name).suffix == backend_impl.extension
-            for artifact_name in artifact_names
-        ):
-            return backend_name
+    candidates = [
+        backend_name
+        for backend_name, backend_impl in BACKENDS.items()
+        if not backend_impl.runtime_only
+        and any((artifacts_dir / name).suffix == backend_impl.extension for name in artifact_names)
+    ]
+    if len(candidates) == 1:
+        return candidates[0]
     suffixes = sorted({(artifacts_dir / name).suffix for name in artifact_names})
+    if len(candidates) > 1:
+        raise ValueError(
+            f"Multiple backends match artifacts {sorted(artifact_names)} "
+            f"(suffixes: {suffixes}): {candidates}. "
+            "Set model.backend in the manifest or pass backend=... explicitly to load_exported_policy()."
+        )
     raise ValueError(
         f"Cannot detect backend for artifacts {sorted(artifact_names)} "
         f"(suffixes: {suffixes}). Registered backends: {sorted(BACKENDS)}. "

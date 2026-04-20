@@ -131,9 +131,10 @@ def get_normalization_groups(
         if mode is None:
             continue
         mode_value = mode.value if hasattr(mode, "value") else str(mode)
-        if mode_value == "IDENTITY":
+        mode_key = mode_value.lower()
+        if mode_key == "identity":
             continue
-        groups.setdefault(mode_value, []).append(key)
+        groups.setdefault(mode_key, []).append(key)
     return list(groups.items())
 
 

@@ -108,6 +108,39 @@ class TestACTExport:
         )
 
     @pytest.mark.slow
+    def test_onnx_numerical_parity_with_normalization(self, tmp_path: Path):
+        """End-to-end parity with normalization ON: verifies runtime Normalizer matches PyTorch."""
+        from lerobot.export import load_exported_policy
+
+        policy, batch = create_act_policy_and_batch()
+
+        with torch.no_grad():
+            torch.manual_seed(42)
+            pytorch_output = policy.predict_action_chunk(batch)
+
+        package_path = policy.to_onnx(
+            tmp_path / "act_package",
+            example_batch=batch,
+            include_normalization=True,
+        )
+
+        runtime = load_exported_policy(package_path, backend="onnx", device="cpu")
+        obs_numpy = to_numpy(batch)
+        onnx_output = runtime.predict_action_chunk(obs_numpy)
+
+        pytorch_np = pytorch_output.cpu().numpy()
+        if pytorch_np.ndim == 3 and pytorch_np.shape[0] == 1:
+            pytorch_np = pytorch_np[0]
+
+        assert_numerical_parity(
+            onnx_output,
+            pytorch_np,
+            rtol=1e-4,
+            atol=1e-4,
+            msg="ACT ONNX output (with runtime normalization) does not match PyTorch output",
+        )
+
+    @pytest.mark.slow
     def test_select_action_is_default_api(self, tmp_path: Path):
         from lerobot.export import load_exported_policy
 
