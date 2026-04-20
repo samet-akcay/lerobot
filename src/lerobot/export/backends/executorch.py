@@ -146,7 +146,12 @@ def _write_io_spec_yaml(
     *,
     extras: dict[str, Any] | None = None,
 ) -> None:
-    import yaml
+    try:
+        import yaml
+    except ImportError as e:
+        raise ImportError(
+            "PyYAML is required for the ExecuTorch backend. Install with: pip install pyyaml"
+        ) from e
 
     payload: dict[str, Any] = {"input_names": input_names, "output_names": output_names}
     if extras:
@@ -156,7 +161,12 @@ def _write_io_spec_yaml(
 
 
 def _read_io_spec(model_path: Path) -> dict[str, list[str]]:
-    import yaml
+    try:
+        import yaml
+    except ImportError as e:
+        raise ImportError(
+            "PyYAML is required for the ExecuTorch backend. Install with: pip install pyyaml"
+        ) from e
 
     model_specific = model_path.parent / f"{model_path.stem}_io_spec.yaml"
     generic = model_path.parent / "io_spec.yaml"

@@ -59,8 +59,11 @@ class Normalizer:
     """Applies per-feature normalization to inference inputs and outputs.
 
     Features are registered individually with their canonical mode
-    (``mean_std``, ``min_max``, or ``identity``) and the safetensors
-    stats they should consult. Unknown features pass through unchanged.
+    (``mean_std``, ``min_max``, ``quantiles``, ``quantile10``, or
+    ``identity``) and the safetensors stats they should consult.
+    Unknown features pass through unchanged. All non-``identity`` modes
+    fail fast (``ValueError``) if their required stats keys are missing,
+    matching the training-side processor contract.
     """
 
     def __init__(
@@ -89,12 +92,16 @@ class Normalizer:
         output_specs: dict[str, str] = {}
         artifacts: set[str] = set()
 
+        non_identity_seen = False
+
         for spec in preprocessors or []:
             if spec.type != "normalize":
                 continue
             mode = _canonical_mode(spec.mode)
             for feature in spec.features or []:
                 input_specs[feature] = mode
+            if mode != "identity":
+                non_identity_seen = True
             if spec.artifact:
                 artifacts.add(spec.artifact)
 
@@ -104,6 +111,8 @@ class Normalizer:
             mode = _canonical_mode(spec.mode)
             for feature in spec.features or []:
                 output_specs[feature] = mode
+            if mode != "identity":
+                non_identity_seen = True
             if spec.artifact:
                 artifacts.add(spec.artifact)
 
@@ -111,6 +120,14 @@ class Normalizer:
             return None
 
         if not artifacts:
+            # Legitimate when every spec is identity (no stats needed).
+            # Otherwise the manifest is malformed: non-identity modes must
+            # declare a stats artifact.
+            if non_identity_seen:
+                raise ValueError(
+                    "Manifest declares non-identity normalization specs but no stats artifact. "
+                    "Every non-identity normalize/denormalize spec must reference a stats file."
+                )
             return None
 
         stats: dict[str, dict[str, NDArray[np.floating]]] = {}
@@ -193,7 +210,9 @@ class Normalizer:
         mean = stats.get("mean")
         std = stats.get("std")
         if mean is None or std is None:
-            return tensor
+            raise ValueError(
+                f"mean_std normalization requires 'mean' and 'std' stats; found keys {sorted(stats)}."
+            )
 
         if inverse:
             return tensor * std + mean
@@ -208,7 +227,9 @@ class Normalizer:
         min_val = stats.get("min")
         max_val = stats.get("max")
         if min_val is None or max_val is None:
-            return tensor
+            raise ValueError(
+                f"min_max normalization requires 'min' and 'max' stats; found keys {sorted(stats)}."
+            )
 
         denom = max_val - min_val
         denom = np.where(denom == 0, self._eps, denom)

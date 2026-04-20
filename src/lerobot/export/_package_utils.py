@@ -155,8 +155,8 @@ def save_policy_config(policy: PreTrainedPolicy, path: Path) -> None:
         config_dict = {k: v for k, v in policy.config.__dict__.copy().items() if is_json_serializable(v)}
         with open(path, "w") as f:
             json.dump(config_dict, f, indent=2, default=str)
-    except Exception as e:
-        logger.debug("Could not save policy config to %s: %s", path, e)
+    except (OSError, TypeError, ValueError) as e:
+        logger.warning("Could not save policy config to %s: %s", path, e)
 
 
 def is_json_serializable(value: Any) -> bool:
