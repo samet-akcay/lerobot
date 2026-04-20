@@ -1,0 +1,212 @@
+#!/usr/bin/env python
+
+# Copyright 2026 The HuggingFace Inc. team. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+from typing import Any
+
+import numpy as np
+import pytest
+import torch
+from torch import nn
+
+from lerobot.export import export_policy, load_exported_policy
+from lerobot.export.backends import BACKENDS, register_backend
+from lerobot.export.backends.onnx import ONNXBackend
+from lerobot.export.runners.base import RUNNERS, ExportModule, build_dynamic_axes, register_runner
+from tests.export.conftest import create_act_policy_and_batch
+
+
+@pytest.fixture
+def restore_registries() -> None:
+    runner_snapshot = list(RUNNERS)
+    backend_snapshot = dict(BACKENDS)
+    yield
+    RUNNERS[:] = runner_snapshot
+    BACKENDS.clear()
+    BACKENDS.update(backend_snapshot)
+
+
+def test_builtin_backends_registered() -> None:
+    assert "onnx" in BACKENDS
+    if importlib_available("executorch"):
+        assert "executorch" in BACKENDS
+
+
+def test_openvino_backend_is_runtime_only() -> None:
+    assert BACKENDS["openvino"].runtime_only is True
+
+
+def test_export_rejects_runtime_only_backend(tmp_path: Path) -> None:
+    policy, batch = create_act_policy_and_batch()
+    with pytest.raises(ValueError, match="OpenVINO is runtime_only; export with backend='onnx' first"):
+        export_policy(policy, tmp_path / "openvino_export", backend="openvino", example_batch=batch)
+
+
+def test_toy_runner_and_backend_work_without_core_edits(tmp_path: Path, restore_registries: None) -> None:
+    class ToyConfig:
+        n_obs_steps = 1
+        repo_id = None
+        revision = None
+
+    class AddOne(nn.Module):
+        def forward(self, x: torch.Tensor) -> torch.Tensor:
+            return x + 1
+
+    class ToyPolicy(nn.Module):
+        name = "toy_policy"
+
+        def __init__(self):
+            super().__init__()
+            self.config = ToyConfig()
+            self.model = AddOne().eval()
+
+    class ToyBackendSession:
+        def __init__(
+            self, modules: dict[str, torch.jit.ScriptModule], io_specs: dict[str, dict[str, list[str]]]
+        ):
+            self._modules = modules
+            self._io_specs = io_specs
+
+        def run(self, name: str, inputs: dict[str, np.ndarray]) -> dict[str, np.ndarray]:
+            io_spec = self._io_specs[name]
+            ordered = [torch.from_numpy(inputs[input_name]) for input_name in io_spec["input_names"]]
+            output = self._modules[name](*ordered)
+            if not isinstance(output, tuple):
+                output = (output,)
+            return {
+                output_name: value.detach().cpu().numpy()
+                for output_name, value in zip(io_spec["output_names"], output, strict=True)
+            }
+
+    @register_backend
+    class ToyBackend:
+        name = "toy_backend"
+        extension = ".pt"
+
+        def serialize(
+            self,
+            modules: list[ExportModule],
+            artifacts_dir: Path,
+            **kwargs: Any,
+        ) -> dict[str, str]:
+            del kwargs
+            artifacts: dict[str, str] = {}
+            for module in modules:
+                model_path = artifacts_dir / f"{module.name}{self.extension}"
+                io_path = artifacts_dir / f"{module.name}_io.json"
+                torch.jit.trace(module.wrapper, module.example_inputs).save(str(model_path))
+                io_path.write_text(
+                    json.dumps({"input_names": module.input_names, "output_names": module.output_names})
+                )
+                artifacts[module.name] = f"artifacts/{model_path.name}"
+            return artifacts
+
+        def open(
+            self, artifacts_dir: Path, manifest: dict[str, Any], *, device: str = "cpu"
+        ) -> ToyBackendSession:
+            del device
+            modules = {}
+            io_specs = {}
+            for name, relative_path in manifest["model"]["artifacts"].items():
+                model_path = artifacts_dir / Path(relative_path).name
+                modules[name] = torch.jit.load(str(model_path))
+                io_specs[name] = json.loads((artifacts_dir / f"{name}_io.json").read_text())
+            return ToyBackendSession(modules, io_specs)
+
+    @register_runner
+    class ToyRunner:
+        type = "toy_runner"
+
+        def __init__(self, backend_session: ToyBackendSession):
+            self._backend_session = backend_session
+
+        @classmethod
+        def matches(cls, policy: object) -> bool:
+            return isinstance(policy, ToyPolicy)
+
+        @classmethod
+        def export(
+            cls,
+            policy: object,
+            example_batch: dict[str, torch.Tensor],
+        ) -> tuple[list[ExportModule], dict[str, Any]]:
+            toy_policy = policy
+            assert isinstance(toy_policy, ToyPolicy)
+            module = ExportModule(
+                name="toy",
+                wrapper=toy_policy.model,
+                example_inputs=(example_batch["x"],),
+                input_names=["x"],
+                output_names=["action"],
+                dynamic_axes=build_dynamic_axes(["x"], ["action"]),
+            )
+            return [module], {"n_action_steps": 1}
+
+        @classmethod
+        def load(
+            cls,
+            manifest: dict[str, Any],
+            artifacts_dir: Path,
+            backend_session: ToyBackendSession,
+        ) -> ToyRunner:
+            del manifest, artifacts_dir
+            return cls(backend_session)
+
+        def predict_action_chunk(self, batch: dict[str, np.ndarray]) -> np.ndarray:
+            return self._backend_session.run("toy", batch)["action"]
+
+        def reset(self) -> None:
+            return None
+
+    policy = ToyPolicy().eval()
+    batch = {"x": torch.tensor([[2.0]], dtype=torch.float32)}
+    package_path = export_policy(policy, tmp_path / "toy_package", backend="toy_backend", example_batch=batch)
+
+    assert (package_path / "artifacts" / "toy.pt").exists()
+
+    runtime = load_exported_policy(package_path, backend="toy_backend", device="cpu")
+    output = runtime.predict_action_chunk({"x": np.array([[2.0]], dtype=np.float32)})
+
+    np.testing.assert_allclose(output, np.array([[3.0]], dtype=np.float32))
+
+
+def test_onnx_backend_round_trip_identity_module(tmp_path: Path) -> None:
+    pytest.importorskip("onnxruntime")
+
+    backend = ONNXBackend()
+    module = ExportModule(
+        name="toy",
+        wrapper=nn.Identity().eval(),
+        example_inputs=(torch.tensor([[1.0, 2.0]], dtype=torch.float32),),
+        input_names=["x"],
+        output_names=["y"],
+        dynamic_axes=build_dynamic_axes(["x"], ["y"]),
+    )
+
+    artifacts = backend.serialize([module], tmp_path, opset_version=17)
+    session = backend.open(tmp_path, {"model": {"artifacts": artifacts}}, device="cpu")
+    outputs = session.run("toy", {"x": np.array([[4.0, 5.0]], dtype=np.float32)})
+
+    np.testing.assert_allclose(outputs["y"], np.array([[4.0, 5.0]], dtype=np.float32))
+
+
+def importlib_available(module_name: str) -> bool:
+    import importlib.util
+
+    return importlib.util.find_spec(module_name) is not None

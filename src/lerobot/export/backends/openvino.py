@@ -13,36 +13,79 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""OpenVINO runtime adapter for model execution."""
 
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, ClassVar
 
 import numpy as np
 
+from .base import register_backend, resolve_artifact_paths
+
 if TYPE_CHECKING:
-    from numpy.typing import NDArray
+    from ..runners.base import ExportModule
+    from .base import BackendSession
 
 
-class OpenVINORuntimeAdapter:
-    """OpenVINO runtime adapter for model inference.
+class OpenVINOBackendSession:
+    def __init__(
+        self,
+        infer_requests: dict[str, Any],
+        input_names: dict[str, list[str]],
+        output_names: dict[str, list[str]],
+        input_name_mappings: dict[str, dict[str, str]],
+        output_name_mappings: dict[str, dict[str, str]],
+    ):
+        self._infer_requests = infer_requests
+        self._input_names = input_names
+        self._output_names = output_names
+        self._input_name_mappings = input_name_mappings
+        self._output_name_mappings = output_name_mappings
 
-    This adapter wraps OpenVINO's Core and CompiledModel to provide a simple
-    interface for running models optimized for Intel hardware.
-    """
+    def run(self, name: str, inputs: dict[str, np.ndarray]) -> dict[str, np.ndarray]:
+        input_names = self._input_names[name]
+        ov_inputs = {k: v for k, v in inputs.items() if k in input_names}
+        missing = set(input_names) - set(ov_inputs)
+        if missing:
+            raise ValueError(f"Missing required inputs for {name!r}: {sorted(missing)}")
 
-    def __init__(self, model_path: Path | str, device: str = "cpu"):
-        """Initialize the OpenVINO runtime adapter.
+        mapped_inputs = {
+            self._input_name_mappings[name].get(input_name, input_name): value
+            for input_name, value in ov_inputs.items()
+        }
+        infer_request = self._infer_requests[name]
+        infer_request.infer(mapped_inputs)
 
-        Args:
-            model_path: Path to the ONNX or OpenVINO IR model file.
-            device: Device for inference ("cpu", "gpu", "npu", etc.).
+        outputs: dict[str, np.ndarray] = {}
+        for output_name in self._output_names[name]:
+            compiled_name = self._output_name_mappings[name].get(output_name, output_name)
+            outputs[output_name] = infer_request.get_tensor(compiled_name).data.copy()
+        return outputs
 
-        Raises:
-            ImportError: If openvino is not installed.
-        """
+
+@register_backend
+class OpenVINOBackend:
+    name: ClassVar[str] = "openvino"
+    extension: ClassVar[str] = ".onnx"
+    runtime_only: ClassVar[bool] = True
+
+    def serialize(
+        self,
+        modules: list[ExportModule],
+        artifacts_dir: Path,
+        **kwargs: Any,
+    ) -> dict[str, str]:
+        del modules, artifacts_dir, kwargs
+        raise NotImplementedError("OpenVINO is runtime_only; export with backend='onnx' first")
+
+    def open(
+        self,
+        artifacts_dir: Path,
+        manifest: dict[str, Any],
+        *,
+        device: str = "cpu",
+    ) -> BackendSession:
         try:
             import openvino as ov
         except ImportError as e:
@@ -50,137 +93,70 @@ class OpenVINORuntimeAdapter:
                 "openvino is required for OpenVINO backend. Install with: pip install openvino"
             ) from e
 
-        self._model_path = Path(model_path)
-        self._device = self._normalize_device(device)
+        infer_requests: dict[str, Any] = {}
+        input_names: dict[str, list[str]] = {}
+        output_names: dict[str, list[str]] = {}
+        input_name_mappings: dict[str, dict[str, str]] = {}
+        output_name_mappings: dict[str, dict[str, str]] = {}
 
-        # Initialize OpenVINO Core
-        self._core = ov.Core()
+        core = ov.Core()
+        for name, model_path in resolve_artifact_paths(artifacts_dir, manifest).items():
+            if model_path.suffix != self.extension:
+                continue
+            model = core.read_model(str(model_path))
+            original_input_names = [inp.get_any_name() for inp in model.inputs]
+            original_output_names = [out.get_any_name() for out in model.outputs]
+            compiled_model = core.compile_model(model, _normalize_device(device))
+            infer_request = compiled_model.create_infer_request()
+            compiled_input_names = [inp.get_any_name() for inp in compiled_model.inputs]
+            compiled_output_names = [out.get_any_name() for out in compiled_model.outputs]
 
-        # Read the model (before compilation to get original names)
-        model = self._core.read_model(str(self._model_path))
-
-        # Cache original input/output names before compilation
-        # (OpenVINO can rename inputs during optimization, e.g., image_0 -> /Cast_output_0)
-        original_input_names = [inp.get_any_name() for inp in model.inputs]
-        original_output_names = [out.get_any_name() for out in model.outputs]
-
-        # Compile the model
-        self._compiled_model = self._core.compile_model(model, self._device)
-
-        # Create inference request for reuse
-        self._infer_request = self._compiled_model.create_infer_request()
-
-        # Get compiled model names (may differ from original due to optimization)
-        compiled_input_names = [inp.get_any_name() for inp in self._compiled_model.inputs]
-        compiled_output_names = [out.get_any_name() for out in self._compiled_model.outputs]
-
-        # Use original names externally, but map to compiled names internally
-        self._input_names = original_input_names
-        self._output_names = original_output_names
-
-        # Build mapping from original to compiled names (for inputs that got renamed)
-        self._input_name_mapping: dict[str, str] = {}
-        for orig, comp in zip(original_input_names, compiled_input_names, strict=True):
-            if orig != comp:
-                self._input_name_mapping[orig] = comp
-
-        self._output_name_mapping: dict[str, str] = {}
-        for orig, comp in zip(original_output_names, compiled_output_names, strict=True):
-            if orig != comp:
-                self._output_name_mapping[orig] = comp
-
-        # Build input metadata using original names
-        self._input_metadata = {}
-        for inp, orig_name in zip(self._compiled_model.inputs, original_input_names, strict=True):
-            shape = inp.partial_shape
-            if shape.is_static:
-                shape_list = [d.get_length() for d in shape]
-            else:
-                shape_list = [d.get_length() if d.is_static else -1 for d in shape]
-            self._input_metadata[orig_name] = {
-                "shape": shape_list,
-                "dtype": str(inp.element_type),
+            infer_requests[name] = infer_request
+            input_names[name] = original_input_names
+            output_names[name] = original_output_names
+            input_name_mappings[name] = {
+                original: compiled
+                for original, compiled in zip(original_input_names, compiled_input_names, strict=True)
+                if original != compiled
             }
+            output_name_mappings[name] = {
+                original: compiled
+                for original, compiled in zip(original_output_names, compiled_output_names, strict=True)
+                if original != compiled
+            }
+
+        return OpenVINOBackendSession(
+            infer_requests,
+            input_names,
+            output_names,
+            input_name_mappings,
+            output_name_mappings,
+        )
+
+
+class OpenVINORuntimeAdapter:
+    def __init__(self, model_path: Path | str, device: str = "cpu"):
+        self._session = OpenVINOBackend().open(
+            Path(model_path).parent,
+            {"model": {"artifacts": {"model": f"artifacts/{Path(model_path).name}"}}},
+            device=device,
+        )
 
     @property
     def input_names(self) -> list[str]:
-        """Return the list of input tensor names."""
-        return self._input_names
+        return self._session._input_names["model"]
 
     @property
     def output_names(self) -> list[str]:
-        """Return the list of output tensor names."""
-        return self._output_names
+        return self._session._output_names["model"]
 
-    def run(self, inputs: dict[str, NDArray[np.floating]]) -> dict[str, NDArray[np.floating]]:
-        """Execute one forward pass.
+    def run(self, inputs: dict[str, np.ndarray]) -> dict[str, np.ndarray]:
+        return self._session.run("model", inputs)
 
-        Args:
-            inputs: Dictionary mapping input names to numpy arrays.
 
-        Returns:
-            Dictionary mapping output names to numpy arrays.
-        """
-        ov_inputs = {k: v for k, v in inputs.items() if k in self._input_names}
-
-        missing = set(self._input_names) - set(ov_inputs.keys())
-        if missing:
-            raise ValueError(f"Missing required inputs: {missing}")
-
-        # Map original input names to compiled names if they were renamed
-        mapped_inputs: dict[str, NDArray[np.floating]] = {}
-        for name, value in ov_inputs.items():
-            compiled_name = self._input_name_mapping.get(name, name)
-            mapped_inputs[compiled_name] = value
-
-        self._infer_request.infer(mapped_inputs)
-
-        # Map compiled output names back to original names
-        outputs: dict[str, NDArray[np.floating]] = {}
-        for orig_name in self._output_names:
-            compiled_name = self._output_name_mapping.get(orig_name) or orig_name
-            if compiled_name is None:
-                raise KeyError(f"Missing output name mapping for '{orig_name}'.")
-            tensor = self._infer_request.get_tensor(compiled_name)
-            outputs[orig_name] = tensor.data.copy()
-
-        return outputs
-
-    def _normalize_device(self, device: str) -> str:
-        """Normalize device string to OpenVINO format.
-
-        Args:
-            device: Device specification ("cpu", "cuda", "cuda:0", "gpu", etc.).
-
-        Returns:
-            OpenVINO-compatible device string.
-        """
-        device = device.lower()
-
-        if device.startswith("cuda") or device.startswith("xpu"):
-            return "GPU"
-
-        mapping = {
-            "cpu": "CPU",
-            "gpu": "GPU",
-            "npu": "NPU",
-            "auto": "AUTO",
-        }
-
-        return mapping.get(device, device.upper())
-
-    def get_input_shape(self, name: str) -> list[int] | None:
-        """Get the shape of an input tensor.
-
-        Args:
-            name: Name of the input tensor.
-
-        Returns:
-            Shape as a list, or None if not found.
-        """
-        if name in self._input_metadata:
-            return self._input_metadata[name]["shape"]
-        return None
-
-    def __repr__(self) -> str:
-        return f"OpenVINORuntimeAdapter(model={self._model_path.name}, device={self._device})"
+def _normalize_device(device: str) -> str:
+    device = device.lower()
+    if device.startswith("cuda") or device.startswith("xpu"):
+        return "GPU"
+    mapping = {"cpu": "CPU", "gpu": "GPU", "npu": "NPU", "auto": "AUTO"}
+    return mapping.get(device, device.upper())

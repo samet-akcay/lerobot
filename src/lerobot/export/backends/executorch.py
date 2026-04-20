@@ -13,7 +13,6 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""ExecuTorch runtime adapter for model execution."""
 
 from __future__ import annotations
 
@@ -24,33 +23,123 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 import yaml
 
+from .base import register_backend, resolve_artifact_paths
+
 if TYPE_CHECKING:
-    import torch
-    from numpy.typing import NDArray
+    from ..runners.base import ExportModule
+    from .base import BackendSession
 
 logger = logging.getLogger(__name__)
 
 
+class ExecuTorchBackendSession:
+    def __init__(self, methods: dict[str, Any], io_specs: dict[str, dict[str, list[str]]]):
+        self._methods = methods
+        self._io_specs = io_specs
+
+    def run(self, name: str, inputs: dict[str, np.ndarray]) -> dict[str, np.ndarray]:
+        import torch
+
+        io_spec = self._io_specs.get(name, {})
+        input_names = io_spec.get("input_names", [])
+        output_names = io_spec.get("output_names", [])
+
+        if input_names:
+            missing = [input_name for input_name in input_names if input_name not in inputs]
+            if missing:
+                raise ValueError(f"Missing required inputs for {name!r}: {missing}. Expected: {input_names}")
+            ordered_inputs = [torch.from_numpy(inputs[input_name]) for input_name in input_names]
+        else:
+            ordered_inputs = [torch.from_numpy(value) for value in inputs.values()]
+
+        outputs = self._methods[name].execute(ordered_inputs)
+        if not isinstance(outputs, (list, tuple)):
+            outputs = [outputs]
+
+        names = (
+            output_names
+            if output_names and len(output_names) == len(outputs)
+            else [f"output_{i}" for i in range(len(outputs))]
+        )
+        result: dict[str, np.ndarray] = {}
+        for output_name, output in zip(names, outputs, strict=True):
+            result[output_name] = output.numpy() if isinstance(output, torch.Tensor) else np.asarray(output)
+        return result
+
+
 class ExecuTorchRuntimeAdapter:
-    """ExecuTorch runtime adapter for model inference.
-
-    This adapter loads and runs models exported to the ExecuTorch ``.pte``
-    format. Input and output names are read from ``io_spec.yaml``
-    colocated with the model, since ``.pte`` files do not embed
-    named I/O metadata like ONNX.
-    """
-
     def __init__(self, model_path: Path | str, device: str = "cpu"):
-        """Initialize the ExecuTorch runtime adapter.
+        self._session = ExecuTorchBackend().open(
+            Path(model_path).parent,
+            {"model": {"artifacts": {"model": f"artifacts/{Path(model_path).name}"}}},
+            device=device,
+        )
 
-        Args:
-            model_path: Path to the ``.pte`` model file.
-            device: Device hint (ExecuTorch Python runtime always runs on CPU).
+    @property
+    def input_names(self) -> list[str]:
+        return self._session._io_specs.get("model", {}).get("input_names", [])
 
-        Raises:
-            ImportError: If the ``executorch`` package is not installed.
-            FileNotFoundError: If the model path does not exist.
-        """
+    @property
+    def output_names(self) -> list[str]:
+        return self._session._io_specs.get("model", {}).get("output_names", [])
+
+    def run(self, inputs: dict[str, np.ndarray]) -> dict[str, np.ndarray]:
+        return self._session.run("model", inputs)
+
+
+@register_backend
+class ExecuTorchBackend:
+    name = "executorch"
+    extension = ".pte"
+    runtime_only = False
+
+    def serialize(
+        self,
+        modules: list[ExportModule],
+        artifacts_dir: Path,
+        **kwargs: Any,
+    ) -> dict[str, str]:
+        del kwargs
+        try:
+            from executorch.exir import to_edge
+            from torch.export import export as torch_export
+        except ImportError as e:
+            raise ImportError(
+                "executorch is required for ExecuTorch backend. Install with: pip install executorch"
+            ) from e
+
+        artifacts: dict[str, str] = {}
+        for module in modules:
+            output_path = artifacts_dir / f"{module.name}{self.extension}"
+            exported = torch_export(module.wrapper, module.example_inputs)
+            edge = to_edge(exported)
+            et_program = edge.to_executorch()
+            with output_path.open("wb") as f:
+                f.write(et_program.buffer)
+            _write_io_spec_yaml(
+                artifacts_dir / f"{module.name}_io_spec.yaml",
+                module.input_names,
+                module.output_names,
+                extras=module.hints.get("executorch_io_spec_extras"),
+            )
+            if len(modules) == 1:
+                _write_io_spec_yaml(
+                    artifacts_dir / "io_spec.yaml",
+                    module.input_names,
+                    module.output_names,
+                    extras=module.hints.get("executorch_io_spec_extras"),
+                )
+            artifacts[module.name] = f"artifacts/{output_path.name}"
+        return artifacts
+
+    def open(
+        self,
+        artifacts_dir: Path,
+        manifest: dict[str, Any],
+        *,
+        device: str = "cpu",
+    ) -> BackendSession:
+        del device
         try:
             from executorch.runtime import Runtime
         except ImportError as e:
@@ -58,91 +147,49 @@ class ExecuTorchRuntimeAdapter:
                 "executorch is required for ExecuTorch backend. Install with: pip install executorch"
             ) from e
 
-        self._model_path = Path(model_path)
-        self._device = device
-
-        if not self._model_path.exists():
-            raise FileNotFoundError(f"Model file not found: {self._model_path}")
-
         runtime = Runtime.get()
-        self._program = runtime.load_program(self._model_path)
-        self._method: Any = self._program.load_method("forward")
+        methods: dict[str, Any] = {}
+        io_specs: dict[str, dict[str, list[str]]] = {}
+        artifact_paths = resolve_artifact_paths(artifacts_dir, manifest)
+        for name, path in artifact_paths.items():
+            if path.suffix != self.extension:
+                continue
+            program = runtime.load_program(path)
+            methods[name] = program.load_method("forward")
+            io_specs[name] = _read_io_spec(path)
+        return ExecuTorchBackendSession(methods, io_specs)
 
-        self._input_names: list[str] = []
-        self._output_names: list[str] = []
-        self._load_metadata()
 
-    def _load_metadata(self) -> None:
-        """Load input/output name metadata from ``io_spec.yaml`` sidecars."""
-        model_stem = self._model_path.stem
-        model_specific = self._model_path.parent / f"{model_stem}_io_spec.yaml"
-        generic = self._model_path.parent / "io_spec.yaml"
+def _write_io_spec_yaml(
+    path: Path,
+    input_names: list[str],
+    output_names: list[str],
+    *,
+    extras: dict[str, Any] | None = None,
+) -> None:
+    payload: dict[str, Any] = {"input_names": input_names, "output_names": output_names}
+    if extras:
+        payload.update(extras)
+    with path.open("w", encoding="utf-8") as f:
+        yaml.safe_dump(payload, f, default_flow_style=False)
 
-        metadata_path = model_specific if model_specific.exists() else generic
 
-        if not metadata_path.exists():
-            logger.warning("No io_spec.yaml found alongside %s; using positional I/O.", self._model_path)
-            return
+def _read_io_spec(model_path: Path) -> dict[str, list[str]]:
+    model_specific = model_path.parent / f"{model_path.stem}_io_spec.yaml"
+    generic = model_path.parent / "io_spec.yaml"
+    metadata_path = model_specific if model_specific.exists() else generic
+    if not metadata_path.exists():
+        logger.warning("No io_spec.yaml found alongside %s; using positional I/O.", model_path)
+        return {}
 
-        try:
-            with metadata_path.open("r", encoding="utf-8") as f:
-                metadata = yaml.safe_load(f) or {}
-            self._input_names = [str(n) for n in metadata.get("input_names", [])]
-            self._output_names = [str(n) for n in metadata.get("output_names", [])]
-        except (OSError, yaml.YAMLError) as exc:
-            logger.warning("Failed to read metadata from %s: %s", metadata_path, exc)
+    try:
+        with metadata_path.open("r", encoding="utf-8") as f:
+            metadata = yaml.safe_load(f) or {}
+    except (OSError, yaml.YAMLError) as exc:
+        logger.warning("Failed to read metadata from %s: %s", metadata_path, exc)
+        return {}
 
-    @property
-    def input_names(self) -> list[str]:
-        """Return the list of input tensor names."""
-        return self._input_names
-
-    @property
-    def output_names(self) -> list[str]:
-        """Return the list of output tensor names."""
-        return self._output_names
-
-    def run(self, inputs: dict[str, NDArray[np.floating]]) -> dict[str, NDArray[np.floating]]:
-        """Execute one forward pass.
-
-        Args:
-            inputs: Dictionary mapping input names to numpy arrays.
-
-        Returns:
-            Dictionary mapping output names to numpy arrays.
-        """
-        import torch as _torch
-
-        if self._input_names:
-            missing = [n for n in self._input_names if n not in inputs]
-            if missing:
-                raise ValueError(f"Missing required inputs: {missing}. Expected: {self._input_names}")
-            ordered: list[torch.Tensor] = [
-                _torch.from_numpy(inputs[name])
-                if not isinstance(inputs[name], _torch.Tensor)
-                else inputs[name]
-                for name in self._input_names
-            ]
-        else:
-            ordered = [
-                _torch.from_numpy(v) if not isinstance(v, _torch.Tensor) else v for v in inputs.values()
-            ]
-
-        outputs = self._method.execute(ordered)
-
-        if not isinstance(outputs, (list, tuple)):
-            outputs = [outputs]
-
-        if self._output_names and len(self._output_names) == len(outputs):
-            names = self._output_names
-        else:
-            names = [f"output_{i}" for i in range(len(outputs))]
-
-        result: dict[str, NDArray[np.floating]] = {}
-        for name, out in zip(names, outputs, strict=True):
-            result[name] = out.numpy() if isinstance(out, _torch.Tensor) else np.asarray(out)
-
-        return result
-
-    def __repr__(self) -> str:
-        return f"ExecuTorchRuntimeAdapter(model={self._model_path.name}, device={self._device})"
+    return {
+        "input_names": [str(name) for name in metadata.get("input_names", [])],
+        "output_names": [str(name) for name in metadata.get("output_names", [])],
+    }

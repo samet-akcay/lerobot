@@ -13,79 +13,23 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""ONNX runtime adapter for model execution."""
 
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, cast
 
 import numpy as np
+import torch
+
+from .base import register_backend, resolve_artifact_paths
 
 if TYPE_CHECKING:
-    from numpy.typing import NDArray
+    from ..runners.base import ExportModule
+    from .base import BackendSession
 
 
-class ONNXRuntimeAdapter:
-    """ONNX Runtime adapter for model inference.
-
-    This adapter wraps onnxruntime.InferenceSession to provide a simple
-    interface for running ONNX models.
-    """
-
-    def __init__(self, model_path: Path | str, device: str = "cpu"):
-        """Initialize the ONNX runtime adapter.
-
-        Args:
-            model_path: Path to the ONNX model file.
-            device: Device for inference ("cpu", "cuda", "cuda:0", etc.).
-
-        Raises:
-            ImportError: If onnxruntime is not installed.
-        """
-        try:
-            import onnxruntime as ort
-        except ImportError as e:
-            raise ImportError(
-                "onnxruntime is required for ONNX backend. "
-                "Install with: pip install onnxruntime or pip install onnxruntime-gpu"
-            ) from e
-
-        self._model_path = Path(model_path)
-        self._device = device
-
-        # Configure execution providers based on device
-        providers = self._get_providers(device)
-
-        # Create inference session
-        sess_options = ort.SessionOptions()
-        sess_options.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
-
-        self._session = ort.InferenceSession(
-            str(self._model_path),
-            sess_options=sess_options,
-            providers=providers,
-        )
-
-        # Cache input/output metadata
-        self._input_names = [i.name for i in self._session.get_inputs()]
-        self._output_names = [o.name for o in self._session.get_outputs()]
-
-        # Build input metadata for validation
-        self._input_metadata = {
-            i.name: {"shape": i.shape, "dtype": i.type} for i in self._session.get_inputs()
-        }
-
-    @property
-    def input_names(self) -> list[str]:
-        """Return the list of input tensor names."""
-        return self._input_names
-
-    @property
-    def output_names(self) -> list[str]:
-        """Return the list of output tensor names."""
-        return self._output_names
-
+class ONNXBackendSession:
     _ONNX_TYPE_TO_NUMPY = {
         "tensor(float)": np.float32,
         "tensor(float16)": np.float16,
@@ -97,71 +41,192 @@ class ONNXRuntimeAdapter:
         "tensor(bool)": np.bool_,
     }
 
-    def run(self, inputs: dict[str, NDArray[np.floating]]) -> dict[str, NDArray[np.floating]]:
-        """Execute one forward pass.
+    def __init__(self, sessions: dict[str, Any]):
+        self._sessions = sessions
+        self._input_names = {
+            name: [item.name for item in session.get_inputs()] for name, session in sessions.items()
+        }
+        self._output_names = {
+            name: [item.name for item in session.get_outputs()] for name, session in sessions.items()
+        }
+        self._input_metadata = {
+            name: {item.name: item.type for item in session.get_inputs()}
+            for name, session in sessions.items()
+        }
 
-        Args:
-            inputs: Dictionary mapping input names to numpy arrays.
-
-        Returns:
-            Dictionary mapping output names to numpy arrays.
-        """
-        # Filter inputs to only include those expected by the model
-        ort_inputs = {k: v for k, v in inputs.items() if k in self._input_names}
-
-        # Ensure all required inputs are present
-        missing = set(self._input_names) - set(ort_inputs.keys())
+    def run(self, name: str, inputs: dict[str, np.ndarray]) -> dict[str, np.ndarray]:
+        session = self._sessions[name]
+        input_names = self._input_names[name]
+        ort_inputs = {k: v for k, v in inputs.items() if k in input_names}
+        missing = set(input_names) - set(ort_inputs)
         if missing:
-            raise ValueError(f"Missing required inputs: {missing}")
+            raise ValueError(f"Missing required inputs for {name!r}: {sorted(missing)}")
 
-        # Cast inputs to match ONNX model's expected dtypes
-        for name, arr in ort_inputs.items():
-            expected_type = self._input_metadata[name]["dtype"]
-            np_dtype = self._ONNX_TYPE_TO_NUMPY.get(expected_type)
-            if np_dtype is not None and arr.dtype != np_dtype:
-                ort_inputs[name] = arr.astype(np_dtype)
+        metadata = self._input_metadata[name]
+        for input_name, value in list(ort_inputs.items()):
+            np_dtype = self._ONNX_TYPE_TO_NUMPY.get(metadata[input_name])
+            if np_dtype is not None and value.dtype != np_dtype:
+                ort_inputs[input_name] = value.astype(np_dtype)
 
-        # Run inference
-        outputs = self._session.run(self._output_names, ort_inputs)
+        outputs = session.run(self._output_names[name], ort_inputs)
+        return dict(zip(self._output_names[name], outputs, strict=True))
 
-        return dict(zip(self._output_names, outputs, strict=True))
 
-    def _get_providers(self, device: str) -> list[str | tuple[str, dict]]:
-        """Get execution providers based on device.
+class ONNXRuntimeAdapter:
+    def __init__(self, model_path: Path | str, device: str = "cpu"):
+        self._session = ONNXBackend().open(
+            Path(model_path).parent,
+            {"model": {"artifacts": {"model": f"artifacts/{Path(model_path).name}"}}},
+            device=device,
+        )
 
-        Args:
-            device: Device specification ("cpu", "cuda", "cuda:0", etc.).
+    @property
+    def input_names(self) -> list[str]:
+        return self._session._input_names["model"]
 
-        Returns:
-            List of execution providers in priority order.
-        """
-        if device.startswith("cuda"):
-            # Parse device index if specified
-            device_id = 0
-            if ":" in device:
-                try:
-                    device_id = int(device.split(":")[1])
-                except (ValueError, IndexError):
-                    device_id = 0
+    @property
+    def output_names(self) -> list[str]:
+        return self._session._output_names["model"]
 
-            return [
-                ("CUDAExecutionProvider", {"device_id": device_id}),
-                "CPUExecutionProvider",
-            ]
-        return ["CPUExecutionProvider"]
+    def run(self, inputs: dict[str, np.ndarray]) -> dict[str, np.ndarray]:
+        return self._session.run("model", inputs)
 
-    def get_input_shape(self, name: str) -> list | None:
-        """Get the shape of an input tensor.
 
-        Args:
-            name: Name of the input tensor.
+@register_backend
+class ONNXBackend:
+    name = "onnx"
+    extension = ".onnx"
+    runtime_only = False
 
-        Returns:
-            Shape as a list, or None if not found.
-        """
-        if name in self._input_metadata:
-            return self._input_metadata[name]["shape"]
-        return None
+    def serialize(
+        self,
+        modules: list[ExportModule],
+        artifacts_dir: Path,
+        **kwargs: Any,
+    ) -> dict[str, str]:
+        opset_version = cast(int, kwargs["opset_version"])
+        artifacts: dict[str, str] = {}
+        for module in modules:
+            output_path = artifacts_dir / f"{module.name}{self.extension}"
+            torch.onnx.export(
+                module.wrapper,
+                module.example_inputs,
+                str(output_path),
+                input_names=module.input_names,
+                output_names=module.output_names,
+                dynamic_axes=module.dynamic_axes,
+                opset_version=opset_version,
+                do_constant_folding=True,
+                dynamo=False,
+            )
+            for fixup in module.hints.get("onnx_fixups", []):
+                fixup(output_path)
+            artifacts[module.name] = f"artifacts/{output_path.name}"
+        return artifacts
 
-    def __repr__(self) -> str:
-        return f"ONNXRuntimeAdapter(model={self._model_path.name}, device={self._device})"
+    def open(
+        self,
+        artifacts_dir: Path,
+        manifest: dict[str, Any],
+        *,
+        device: str = "cpu",
+    ) -> BackendSession:
+        try:
+            import onnxruntime as ort
+        except ImportError as e:
+            raise ImportError(
+                "onnxruntime is required for ONNX backend. "
+                "Install with: pip install onnxruntime or pip install onnxruntime-gpu"
+            ) from e
+
+        providers = _get_providers(device)
+        sess_options = ort.SessionOptions()
+        sess_options.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
+        sessions = {
+            name: ort.InferenceSession(str(path), sess_options=sess_options, providers=providers)
+            for name, path in resolve_artifact_paths(artifacts_dir, manifest).items()
+            if path.suffix == self.extension
+        }
+        return ONNXBackendSession(sessions)
+
+
+def _get_providers(device: str) -> list[str | tuple[str, dict[str, int]]]:
+    if device.startswith("cuda"):
+        device_id = 0
+        if ":" in device:
+            try:
+                device_id = int(device.split(":", maxsplit=1)[1])
+            except (ValueError, IndexError):
+                device_id = 0
+        return [("CUDAExecutionProvider", {"device_id": device_id}), "CPUExecutionProvider"]
+    return ["CPUExecutionProvider"]
+
+
+def _fix_onnx_scatter_gather_dtypes(onnx_path: Path) -> None:
+    import onnx
+    from onnx import TensorProto, helper, shape_inference
+
+    model = onnx.load(str(onnx_path))
+    inferred = shape_inference.infer_shapes(model)
+    type_map: dict[str, int] = {}
+    for value_info in [*inferred.graph.value_info, *inferred.graph.input, *inferred.graph.output]:
+        tensor_type = value_info.type.tensor_type
+        if tensor_type.elem_type:
+            type_map[value_info.name] = tensor_type.elem_type
+
+    nodes_to_insert: list[tuple[int, onnx.NodeProto]] = []
+    for idx, node in enumerate(model.graph.node):
+        if node.op_type == "ScatterND" and len(node.input) >= 3:
+            data_input, _, updates_input = node.input[:3]
+            data_type = type_map.get(data_input)
+            updates_type = type_map.get(updates_input)
+            if data_type is not None and updates_type is not None and data_type != updates_type:
+                cast_output = updates_input + f"_cast_to_{TensorProto.DataType.Name(data_type).lower()}"
+                cast_node = helper.make_node(
+                    "Cast",
+                    inputs=[updates_input],
+                    outputs=[cast_output],
+                    name=updates_input + f"/Cast_to_{TensorProto.DataType.Name(data_type).lower()}",
+                    to=data_type,
+                )
+                nodes_to_insert.append((idx, cast_node))
+                node.input[2] = cast_output
+        if node.op_type == "Gather" and len(node.input) >= 2 and "position_embedding" in node.name:
+            indices_input = node.input[1]
+            indices_type = type_map.get(indices_input)
+            if indices_type is not None and indices_type != TensorProto.INT64:
+                cast_output = indices_input + "_cast_to_int64"
+                cast_node = helper.make_node(
+                    "Cast",
+                    inputs=[indices_input],
+                    outputs=[cast_output],
+                    name=indices_input + "/Cast_to_int64",
+                    to=TensorProto.INT64,
+                )
+                nodes_to_insert.append((idx, cast_node))
+                node.input[1] = cast_output
+    for idx, cast_node in reversed(nodes_to_insert):
+        model.graph.node.insert(idx, cast_node)
+    if nodes_to_insert:
+        onnx.save(model, str(onnx_path))
+
+
+def _fix_onnx_double_to_float(onnx_path: Path) -> None:
+    import onnx
+    from onnx import TensorProto, numpy_helper
+
+    model = onnx.load(str(onnx_path))
+    modified = False
+    for node in model.graph.node:
+        if node.op_type == "Constant":
+            for attr in node.attribute:
+                if attr.name == "value" and attr.t.data_type == TensorProto.DOUBLE:
+                    attr.t.CopyFrom(numpy_helper.from_array(numpy_helper.to_array(attr.t).astype(np.float32)))
+                    modified = True
+        if node.op_type == "Cast":
+            for attr in node.attribute:
+                if attr.name == "to" and attr.i == TensorProto.DOUBLE:
+                    attr.i = TensorProto.FLOAT
+                    modified = True
+    if modified:
+        onnx.save(model, str(onnx_path))

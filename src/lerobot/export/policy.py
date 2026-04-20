@@ -13,7 +13,6 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""User-facing exported policy wrapper."""
 
 from __future__ import annotations
 
@@ -23,25 +22,19 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
-from .runner import create_runner
+from . import backends as _backends  # noqa: F401
+from .backends import BACKENDS
+from .manifest import Manifest
+from .runners.base import RUNNERS, Runner
 
 if TYPE_CHECKING:
     from numpy.typing import NDArray
 
-    from .manifest import Manifest
-    from .runner import InferenceRunner
-
 
 class ExportedPolicy:
-    """User-facing wrapper around an exported policy package.
-
-    This mirrors the eager policy interface by exposing ``select_action()`` and
-    ``reset()`` as the primary API, while still allowing advanced callers to use
-    ``predict_action_chunk()`` directly when they need raw chunk access.
-    """
-
-    def __init__(self, runner: InferenceRunner):
+    def __init__(self, runner: Runner, manifest: Manifest):
         self._runner = runner
+        self._manifest = manifest
         self._action_queue: deque[NDArray[np.floating]] = deque()
 
     @classmethod
@@ -51,17 +44,28 @@ class ExportedPolicy:
         backend: str | None = None,
         device: str = "cpu",
     ) -> ExportedPolicy:
-        """Load an exported policy package."""
-        runner = create_runner(package_path, backend=backend, device=device)
-        return cls(runner)
+        package_path = Path(package_path)
+        manifest = Manifest.load(package_path / "manifest.json")
+        manifest_dict = manifest.to_dict()
+        runner_type = manifest.model.runner["type"]
+        runner_cls = next((runner for runner in RUNNERS if runner.type == runner_type), None)
+        if runner_cls is None:
+            raise ValueError(f"Unknown runner type in manifest: {runner_type!r}")
+
+        artifacts_dir = package_path / "artifacts"
+        backend_name = backend or _detect_backend_name(manifest_dict, artifacts_dir)
+        backend_impl = BACKENDS.get(backend_name)
+        if backend_impl is None:
+            raise ValueError(f"Unknown backend: {backend_name!r}. Known: {sorted(BACKENDS)}")
+        sessions = backend_impl.open(artifacts_dir, manifest_dict, device=device)
+        runner = runner_cls.load(manifest_dict, artifacts_dir, sessions)
+        return cls(runner, manifest)
 
     @property
     def manifest(self) -> Manifest:
-        """Return the loaded export manifest."""
-        return self._runner.manifest
+        return self._manifest
 
     def reset(self) -> None:
-        """Clear cached actions and reset the inner runner."""
         self._action_queue.clear()
         self._runner.reset()
 
@@ -70,7 +74,6 @@ class ExportedPolicy:
         observation: dict[str, NDArray[np.floating]],
         **kwargs: Any,
     ) -> NDArray[np.floating]:
-        """Return the raw action chunk from the exported runtime."""
         return self._runner.predict_action_chunk(observation, **kwargs)
 
     def select_action(
@@ -78,18 +81,24 @@ class ExportedPolicy:
         observation: dict[str, NDArray[np.floating]],
         **kwargs: Any,
     ) -> NDArray[np.floating]:
-        """Return one action and manage chunk caching internally."""
         if not self._action_queue:
             chunk = self.predict_action_chunk(observation, **kwargs)
-
             if chunk.ndim == 1:
                 return chunk
-
             if chunk.ndim == 3:
                 chunk = chunk[0]
-
             n_action_steps = self.manifest.model.runner.get("n_action_steps", len(chunk))
             for idx in range(min(n_action_steps, len(chunk))):
                 self._action_queue.append(chunk[idx])
-
         return self._action_queue.popleft()
+
+
+def _detect_backend_name(manifest: dict[str, Any], artifacts_dir: Path) -> str:
+    artifact_names = {Path(path).name for path in manifest["model"]["artifacts"].values()}
+    for backend_name, backend_impl in BACKENDS.items():
+        if any(
+            (artifacts_dir / artifact_name).suffix == backend_impl.extension
+            for artifact_name in artifact_names
+        ):
+            return backend_name
+    return "onnx"

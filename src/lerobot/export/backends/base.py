@@ -13,81 +13,58 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Runtime adapter protocol and factory for model execution."""
 
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TYPE_CHECKING, Protocol, cast, runtime_checkable
+from typing import TYPE_CHECKING, Any, ClassVar, Protocol, runtime_checkable
 
 import numpy as np
 
 if TYPE_CHECKING:
-    from numpy.typing import NDArray
+    from ..runners.base import ExportModule
 
 
 @runtime_checkable
-class RuntimeAdapter(Protocol):
-    """Minimal interface for model execution.
-
-    Runtime adapters are intentionally minimal—they execute a single forward pass.
-    The runner handles the higher-level logic like normalization and iterative loops.
-    """
-
-    @property
-    def input_names(self) -> list[str]:
-        """Return the list of input tensor names."""
-        ...
-
-    @property
-    def output_names(self) -> list[str]:
-        """Return the list of output tensor names."""
-        ...
-
-    def run(self, inputs: dict[str, NDArray[np.floating]]) -> dict[str, NDArray[np.floating]]:
-        """Execute one forward pass.
-
-        Args:
-            inputs: Dictionary mapping input names to numpy arrays.
-
-        Returns:
-            Dictionary mapping output names to numpy arrays.
-        """
-        ...
+class BackendSession(Protocol):
+    def run(self, name: str, inputs: dict[str, np.ndarray]) -> dict[str, np.ndarray]: ...
 
 
-def get_runtime_adapter(adapter_name: str, model_path: Path, device: str = "cpu") -> RuntimeAdapter:
-    """Factory function to get the appropriate runtime adapter.
+@runtime_checkable
+class Backend(Protocol):
+    name: ClassVar[str]
+    extension: ClassVar[str]
+    runtime_only: ClassVar[bool] = False
 
-    Args:
-        adapter_name: Name of the runtime adapter ("onnx", "openvino", or "executorch").
-        model_path: Path to the model file.
-        device: Device for inference ("cpu", "cuda", "cuda:0").
+    def serialize(
+        self,
+        modules: list[ExportModule],
+        artifacts_dir: Path,
+        **kwargs: Any,
+    ) -> dict[str, str]: ...
 
-    Returns:
-        RuntimeAdapter instance ready for inference.
+    def open(
+        self,
+        artifacts_dir: Path,
+        manifest: dict[str, Any],
+        *,
+        device: str = "cpu",
+    ) -> BackendSession: ...
 
-    Raises:
-        ValueError: If the adapter is not supported.
-    """
-    if adapter_name == "onnx":
-        from .onnx import ONNXRuntimeAdapter
 
-        adapter = cast(object, ONNXRuntimeAdapter(model_path, device))
-    elif adapter_name == "openvino":
-        from .openvino import OpenVINORuntimeAdapter
+BACKENDS: dict[str, Backend] = {}
 
-        adapter = cast(object, OpenVINORuntimeAdapter(model_path, device))
-    elif adapter_name == "executorch":
-        from .executorch import ExecuTorchRuntimeAdapter
 
-        adapter = cast(object, ExecuTorchRuntimeAdapter(model_path, device))
-    else:
-        raise ValueError(
-            f"Unsupported runtime adapter: {adapter_name}. Supported: onnx, openvino, executorch"
-        )
+def register_backend(cls: type[Backend]) -> type[Backend]:
+    backend = cls()
+    if not hasattr(backend, "runtime_only"):
+        backend.runtime_only = False
+    BACKENDS[cls.name] = backend
+    return cls
 
-    if not isinstance(adapter, RuntimeAdapter):
-        raise TypeError(f"Runtime adapter '{adapter_name}' must implement the RuntimeAdapter protocol.")
 
-    return adapter
+def resolve_artifact_paths(artifacts_dir: Path, manifest: dict[str, Any]) -> dict[str, Path]:
+    return {
+        name: artifacts_dir / Path(relative_path).name
+        for name, relative_path in manifest["model"]["artifacts"].items()
+    }
