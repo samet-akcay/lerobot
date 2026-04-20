@@ -20,7 +20,7 @@ from typing import TYPE_CHECKING, Any, ClassVar
 
 import numpy as np
 
-from ..backends.base import BackendSession
+from ..interfaces import BackendSession
 from ..protocols import Exportable, is_exportable
 from .base import ExportModule, build_dynamic_axes, build_normalizer, get_output_by_names, register_runner
 

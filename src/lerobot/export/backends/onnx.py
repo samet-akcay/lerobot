@@ -26,8 +26,8 @@ import torch
 from .base import register_backend, resolve_artifact_paths
 
 if TYPE_CHECKING:
+    from ..interfaces import BackendSession
     from ..runners.base import ExportModule
-    from .base import BackendSession
 
 
 class ONNXBackendSession:

@@ -21,7 +21,7 @@ from typing import TYPE_CHECKING, Any, ClassVar
 import numpy as np
 import torch
 
-from ..backends.base import BackendSession
+from ..interfaces import BackendSession
 from ..protocols import is_exportable
 from .action_chunking import policy_as_exportable
 from .base import ExportModule, build_dynamic_axes, build_normalizer, get_output_by_names, register_runner

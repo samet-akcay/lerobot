@@ -19,15 +19,13 @@ from __future__ import annotations
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar, Protocol, runtime_checkable
 
-import numpy as np
+from ..interfaces import BackendSession
 
 if TYPE_CHECKING:
     from ..runners.base import ExportModule
 
 
-@runtime_checkable
-class BackendSession(Protocol):
-    def run(self, name: str, inputs: dict[str, np.ndarray]) -> dict[str, np.ndarray]: ...
+__all__ = ["BACKENDS", "Backend", "BackendSession", "register_backend", "resolve_artifact_paths"]
 
 
 @runtime_checkable

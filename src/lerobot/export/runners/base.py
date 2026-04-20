@@ -25,13 +25,12 @@ from typing import TYPE_CHECKING, Any, ClassVar, Protocol, runtime_checkable
 import numpy as np
 from torch import Tensor, nn
 
+from ..interfaces import BackendSession
 from ..manifest import ProcessorSpec
 from ..normalize import Normalizer
 
 if TYPE_CHECKING:
     from numpy.typing import NDArray
-
-    from ..backends.base import BackendSession
 
 logger = logging.getLogger(__name__)
 

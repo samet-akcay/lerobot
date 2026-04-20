@@ -20,7 +20,7 @@ from typing import TYPE_CHECKING, Any, ClassVar
 
 import numpy as np
 
-from ..backends.base import BackendSession
+from ..interfaces import BackendSession
 from ..protocols import is_exportable
 from ..schedulers import create_scheduler
 from .action_chunking import policy_as_exportable
