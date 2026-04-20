@@ -16,9 +16,10 @@
 """Runtime normalization for exported policies.
 
 Each feature is normalized independently according to the mode declared
-in its :class:`ProcessorSpec` (``mean_std``, ``min_max``, or
-``identity``). A single policy may mix modes across features — e.g.
-Diffusion uses ``min_max`` for state/action and ``mean_std`` for images.
+in its :class:`ProcessorSpec` (``mean_std``, ``min_max``, ``quantiles``,
+``quantile10``, or ``identity``). A single policy may mix modes across
+features — e.g. Diffusion uses ``min_max`` for state/action and
+``mean_std`` for images; PI05 uses ``quantiles`` for state/action.
 """
 
 from __future__ import annotations
@@ -38,6 +39,8 @@ _MODE_ALIASES: dict[str, str] = {
     "standard": "mean_std",
     "min_max": "min_max",
     "identity": "identity",
+    "quantiles": "quantiles",
+    "quantile10": "quantile10",
 }
 
 
@@ -174,6 +177,10 @@ class Normalizer:
             return self._apply_mean_std(tensor, stats, inverse)
         if mode == "min_max":
             return self._apply_min_max(tensor, stats, inverse)
+        if mode == "quantiles":
+            return self._apply_quantile_range(tensor, stats, inverse, lower_key="q01", upper_key="q99")
+        if mode == "quantile10":
+            return self._apply_quantile_range(tensor, stats, inverse, lower_key="q10", upper_key="q90")
 
         return tensor
 
@@ -209,6 +216,30 @@ class Normalizer:
         if inverse:
             return (tensor + 1) / 2 * denom + min_val
         return 2 * (tensor - min_val) / denom - 1
+
+    def _apply_quantile_range(
+        self,
+        tensor: NDArray[np.floating],
+        stats: dict[str, NDArray[np.floating]],
+        inverse: bool,
+        *,
+        lower_key: str,
+        upper_key: str,
+    ) -> NDArray[np.floating]:
+        lower = stats.get(lower_key)
+        upper = stats.get(upper_key)
+        if lower is None or upper is None:
+            raise ValueError(
+                f"Quantile normalization requires '{lower_key}' and '{upper_key}' stats; "
+                f"found keys {sorted(stats)}."
+            )
+
+        denom = upper - lower
+        denom = np.where(denom == 0, self._eps, denom)
+
+        if inverse:
+            return (tensor + 1.0) / 2.0 * denom + lower
+        return 2.0 * (tensor - lower) / denom - 1.0
 
 
 def _load_stats(path: Path | str) -> dict[str, dict[str, NDArray[np.floating]]]:

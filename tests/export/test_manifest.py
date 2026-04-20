@@ -360,3 +360,106 @@ class TestNormalizer:
 
         result = Normalizer.from_specs([], [], tmp_path)
         assert result is None
+
+    def test_normalizer_quantiles_roundtrip(self, tmp_path: Path):
+        from lerobot.export.manifest import ProcessorSpec
+        from lerobot.export.normalize import Normalizer, save_stats_safetensors
+
+        stats = {
+            "observation.state": {
+                "q01": np.array([-2.0, 0.0], dtype=np.float32),
+                "q99": np.array([2.0, 4.0], dtype=np.float32),
+            },
+            "action": {
+                "q01": np.array([-1.0, 0.0], dtype=np.float32),
+                "q99": np.array([1.0, 2.0], dtype=np.float32),
+            },
+        }
+        save_stats_safetensors(stats, tmp_path / "stats.safetensors")
+
+        preprocessors = [
+            ProcessorSpec(
+                type="normalize",
+                mode="quantiles",
+                artifact="stats.safetensors",
+                features=["observation.state"],
+            )
+        ]
+        postprocessors = [
+            ProcessorSpec(
+                type="denormalize",
+                mode="quantiles",
+                artifact="stats.safetensors",
+                features=["action"],
+            )
+        ]
+
+        normalizer = Normalizer.from_specs(preprocessors, postprocessors, tmp_path)
+        assert normalizer is not None
+
+        observation = {"observation.state": np.array([[-2.0, 4.0], [2.0, 0.0]], dtype=np.float32)}
+        normalized = normalizer.normalize_inputs(observation)
+        expected = np.array([[-1.0, 1.0], [1.0, -1.0]], dtype=np.float32)
+        np.testing.assert_allclose(normalized["observation.state"], expected, rtol=1e-5)
+
+        action_scaled = np.array([[-1.0, 1.0], [1.0, -1.0]], dtype=np.float32)
+        recovered = normalizer.denormalize_outputs(action_scaled, key="action")
+        expected_action = np.array([[-1.0, 2.0], [1.0, 0.0]], dtype=np.float32)
+        np.testing.assert_allclose(recovered, expected_action, rtol=1e-5)
+
+    def test_normalizer_quantile10_uses_q10_q90(self, tmp_path: Path):
+        from lerobot.export.manifest import ProcessorSpec
+        from lerobot.export.normalize import Normalizer, save_stats_safetensors
+
+        stats = {
+            "observation.state": {
+                "q10": np.array([0.0], dtype=np.float32),
+                "q90": np.array([10.0], dtype=np.float32),
+            }
+        }
+        save_stats_safetensors(stats, tmp_path / "stats.safetensors")
+
+        preprocessors = [
+            ProcessorSpec(
+                type="normalize",
+                mode="quantile10",
+                artifact="stats.safetensors",
+                features=["observation.state"],
+            )
+        ]
+        normalizer = Normalizer.from_specs(preprocessors, None, tmp_path)
+        assert normalizer is not None
+
+        observation = {"observation.state": np.array([[0.0, 5.0, 10.0]], dtype=np.float32)}
+        normalized = normalizer.normalize_inputs(observation)
+        expected = np.array([[-1.0, 0.0, 1.0]], dtype=np.float32)
+        np.testing.assert_allclose(normalized["observation.state"], expected, rtol=1e-5)
+
+    def test_normalizer_quantiles_requires_q01_q99(self, tmp_path: Path):
+        import pytest
+
+        from lerobot.export.manifest import ProcessorSpec
+        from lerobot.export.normalize import Normalizer, save_stats_safetensors
+
+        stats = {
+            "observation.state": {
+                "mean": np.array([0.0], dtype=np.float32),
+                "std": np.array([1.0], dtype=np.float32),
+            }
+        }
+        save_stats_safetensors(stats, tmp_path / "stats.safetensors")
+
+        preprocessors = [
+            ProcessorSpec(
+                type="normalize",
+                mode="quantiles",
+                artifact="stats.safetensors",
+                features=["observation.state"],
+            )
+        ]
+        normalizer = Normalizer.from_specs(preprocessors, None, tmp_path)
+        assert normalizer is not None
+
+        observation = {"observation.state": np.array([[0.5]], dtype=np.float32)}
+        with pytest.raises(ValueError, match="q01.*q99|quantile"):
+            normalizer.normalize_inputs(observation)

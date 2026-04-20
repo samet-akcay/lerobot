@@ -109,14 +109,33 @@ class TestACTExport:
 
     @pytest.mark.slow
     def test_onnx_numerical_parity_with_normalization(self, tmp_path: Path):
-        """End-to-end parity with normalization ON: verifies runtime Normalizer matches PyTorch."""
+        """End-to-end parity with normalization ON: runtime Normalizer must match manual normalize/denormalize."""
         from lerobot.export import load_exported_policy
 
         policy, batch = create_act_policy_and_batch()
+        state_mean = np.full(6, 0.1, dtype=np.float32)
+        state_std = np.full(6, 0.5, dtype=np.float32)
+        image_mean = np.full((3, 1, 1), 0.25, dtype=np.float32)
+        image_std = np.full((3, 1, 1), 0.5, dtype=np.float32)
+        action_mean = np.full(6, 0.2, dtype=np.float32)
+        action_std = np.full(6, 0.4, dtype=np.float32)
 
+        policy.config.stats = {
+            "observation.state": {"mean": state_mean.tolist(), "std": state_std.tolist()},
+            "observation.images.top": {"mean": image_mean.tolist(), "std": image_std.tolist()},
+            "action": {"mean": action_mean.tolist(), "std": action_std.tolist()},
+        }
+
+        normalized_batch = {
+            "observation.state": (batch["observation.state"] - torch.from_numpy(state_mean))
+            / torch.from_numpy(state_std),
+            "observation.images.top": (batch["observation.images.top"] - torch.from_numpy(image_mean))
+            / torch.from_numpy(image_std),
+        }
         with torch.no_grad():
             torch.manual_seed(42)
-            pytorch_output = policy.predict_action_chunk(batch)
+            pytorch_normalized_output = policy.predict_action_chunk(normalized_batch)
+        pytorch_denormalized = pytorch_normalized_output.cpu().numpy() * action_std + action_mean
 
         package_path = policy.to_onnx(
             tmp_path / "act_package",
@@ -124,11 +143,20 @@ class TestACTExport:
             include_normalization=True,
         )
 
+        manifest = _read_manifest(package_path)
+        preprocessors = manifest["model"]["preprocessors"] or []
+        postprocessors = manifest["model"]["postprocessors"] or []
+        assert preprocessors, "Expected manifest to declare normalize preprocessors when stats are present"
+        assert postprocessors, (
+            "Expected manifest to declare denormalize postprocessors when stats are present"
+        )
+        assert (package_path / "artifacts" / "stats.safetensors").exists()
+
         runtime = load_exported_policy(package_path, backend="onnx", device="cpu")
         obs_numpy = to_numpy(batch)
         onnx_output = runtime.predict_action_chunk(obs_numpy)
 
-        pytorch_np = pytorch_output.cpu().numpy()
+        pytorch_np = pytorch_denormalized
         if pytorch_np.ndim == 3 and pytorch_np.shape[0] == 1:
             pytorch_np = pytorch_np[0]
 
@@ -137,7 +165,7 @@ class TestACTExport:
             pytorch_np,
             rtol=1e-4,
             atol=1e-4,
-            msg="ACT ONNX output (with runtime normalization) does not match PyTorch output",
+            msg="ACT ONNX output (with runtime normalization) does not match PyTorch normalize→model→denormalize",
         )
 
     @pytest.mark.slow
