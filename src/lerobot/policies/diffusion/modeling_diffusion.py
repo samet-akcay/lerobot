@@ -32,6 +32,7 @@ import torch.nn.functional as F  # noqa: N812
 import torchvision
 from torch import Tensor, nn
 
+from lerobot.export.protocols import ExportInputs, IterativeExportConfig
 from lerobot.utils.constants import ACTION, OBS_ENV_STATE, OBS_IMAGES, OBS_STATE
 from lerobot.utils.import_utils import _diffusers_available, require_package
 
@@ -50,6 +51,47 @@ from ..utils import (
     populate_queues,
 )
 from .configuration_diffusion import DiffusionConfig
+
+
+class DiffusionInferenceStep(nn.Module):
+    """Wrapper around the diffusion U-Net for one denoise step, used for ONNX export.
+
+    Accepts observation tensors as leading positional args, followed by ``x_t`` and
+    ``timestep``, and returns the velocity prediction of shape ``(B, horizon, action_dim)``.
+    """
+
+    def __init__(
+        self,
+        policy: "DiffusionPolicy",
+        observation_keys: list[str],
+        image_keys: list[str],
+    ) -> None:
+        super().__init__()
+        self.diffusion = policy.diffusion
+        self._observation_keys = observation_keys
+        self._image_keys = image_keys
+
+        if hasattr(self.diffusion, "rgb_encoder"):
+            encoder = self.diffusion.rgb_encoder
+            if isinstance(encoder, nn.ModuleList):
+                for enc in encoder:
+                    enc.do_crop = False
+            else:
+                encoder.do_crop = False
+
+    def forward(self, *args: Tensor) -> Tensor:
+        # Layout: [*observations, x_t, timestep]
+        observations = args[: len(self._observation_keys)]
+        x_t = args[len(self._observation_keys)]
+        timestep = args[len(self._observation_keys) + 1]
+
+        batch: dict[str, Tensor] = dict(zip(self._observation_keys, observations, strict=True))
+        if self._image_keys:
+            batch[OBS_IMAGES] = torch.stack([batch[k] for k in self._image_keys], dim=-4)
+
+        global_cond = self.diffusion._prepare_global_conditioning(batch)
+        timestep_long = timestep.long()
+        return self.diffusion.unet(x_t, timestep_long, global_cond=global_cond)
 
 
 class DiffusionPolicy(PreTrainedPolicy):
@@ -87,6 +129,62 @@ class DiffusionPolicy(PreTrainedPolicy):
 
     def get_optim_params(self) -> dict:
         return self.diffusion.parameters()
+
+    # ------------------------------------------------------------------
+    # Export protocol: Exportable
+    # ------------------------------------------------------------------
+
+    def get_inference_type(self) -> str:
+        return "iterative"
+
+    def get_export_config(self) -> IterativeExportConfig:
+        return IterativeExportConfig(
+            horizon=self.config.horizon,
+            action_dim=self.config.action_feature.shape[0],
+            num_inference_steps=self.diffusion.num_inference_steps,
+            scheduler_type=self.config.noise_scheduler_type.lower(),
+        )
+
+    def get_export_modules(self) -> dict[str, nn.Module]:
+        image_keys = list(self.config.image_features) if self.config.image_features else []
+        observation_keys = list(self._export_observation_keys())
+        module = DiffusionInferenceStep(self, observation_keys, image_keys)
+        module.eval()
+        return {"model": module}
+
+    def prepare_inputs(
+        self,
+        example_batch: dict[str, Tensor],
+    ) -> dict[str, ExportInputs]:
+        observation_keys = list(self._export_observation_keys())
+        device = get_device_from_parameters(self)
+        horizon = self.config.horizon
+        action_dim = self.config.action_feature.shape[0]
+        batch_size = next(iter(example_batch.values())).shape[0]
+
+        x_t = torch.randn(batch_size, horizon, action_dim, device=device)
+        timestep = torch.tensor([1.0], dtype=torch.float32, device=device)
+
+        return {
+            "model": ExportInputs(
+                tensors=tuple(example_batch[k] for k in observation_keys) + (x_t, timestep),
+                input_names=observation_keys + ["x_t", "timestep"],
+                output_names=["v_t"],
+            )
+        }
+
+    def prepare_runtime_inputs(self, stage_name: str, runtime_context: dict[str, object]) -> ExportInputs:
+        raise NotImplementedError(f"{self.__class__.__name__} does not use runtime export inputs.")
+
+    def _export_observation_keys(self):
+        keys: list[str] = []
+        if self.config.robot_state_feature:
+            keys.append(OBS_STATE)
+        if self.config.env_state_feature:
+            keys.append(OBS_ENV_STATE)
+        if self.config.image_features:
+            keys.extend(self.config.image_features)
+        return keys
 
     def reset(self):
         """Clear observation and action queues. Should be called on `env.reset()`"""

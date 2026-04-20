@@ -20,12 +20,13 @@ import logging
 import math
 from collections import deque
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal, TypedDict, Unpack
+from typing import TYPE_CHECKING, Any, Literal, TypedDict, Unpack
 
 import torch
 import torch.nn.functional as F  # noqa: N812
 from torch import Tensor, nn
 
+from lerobot.export.protocols import ExportInputs, KVCacheExportConfig
 from lerobot.utils.import_utils import _transformers_available, require_package
 
 # Conditional import for type checking and lazy loading
@@ -1104,15 +1105,13 @@ class PI05Policy(PreTrainedPolicy):
         self.reset()
 
     # ------------------------------------------------------------------
-    # Export protocol: ExportableKVCache
+    # Export protocol: Exportable
     # ------------------------------------------------------------------
 
     def get_inference_type(self) -> str:
         return "kv_cache"
 
-    def get_kv_cache_export_config(self):
-        from lerobot.export.protocols import KVCacheExportConfig
-
+    def get_export_config(self) -> KVCacheExportConfig:
         gemma_cfg = get_gemma_config(self.config.paligemma_variant)
         return KVCacheExportConfig(
             num_layers=gemma_cfg.depth,
@@ -1125,20 +1124,18 @@ class PI05Policy(PreTrainedPolicy):
             state_in_denoise=False,
         )
 
-    def get_encoder_module(self, num_images: int = 1) -> nn.Module:
-        module = PI05EncoderModule(self.model, num_images=num_images)
-        module.eval()
-        return module
+    def get_export_modules(self) -> dict[str, nn.Module]:
+        num_images = len(self.config.image_features) if self.config.image_features else 0
+        encoder = PI05EncoderModule(self.model, num_images=num_images)
+        denoise = PI05DenoiseModule(self.model)
+        encoder.eval()
+        denoise.eval()
+        return {"encoder": encoder, "denoise": denoise}
 
-    def get_denoise_module(self) -> nn.Module:
-        module = PI05DenoiseModule(self.model)
-        module.eval()
-        return module
-
-    def prepare_encoder_inputs(
+    def prepare_inputs(
         self,
         example_batch: dict[str, Tensor],
-    ) -> tuple[tuple[Tensor, ...], list[str], int, dict[str, str]]:
+    ) -> dict[str, ExportInputs]:
         device = next(self.parameters()).device
         images, img_masks = self._preprocess_images(example_batch)
         lang_tokens = example_batch[OBS_LANGUAGE_TOKENS]
@@ -1173,13 +1170,31 @@ class PI05Policy(PreTrainedPolicy):
         names.append("lang_masks")
         input_mapping[OBS_LANGUAGE_ATTENTION_MASK] = "lang_masks"
 
-        return tuple(tensors), names, num_images, input_mapping
+        output_names = ["prefix_pad_mask"]
+        num_layers = get_gemma_config(self.config.paligemma_variant).depth
+        for layer_idx in range(num_layers):
+            output_names.append(f"past_key_{layer_idx}")
+            output_names.append(f"past_value_{layer_idx}")
 
-    def prepare_denoise_inputs(
+        return {
+            "encoder": ExportInputs(
+                tensors=tuple(tensors),
+                input_names=names,
+                output_names=output_names,
+                metadata={"num_images": num_images, "input_mapping": input_mapping},
+            )
+        }
+
+    def prepare_runtime_inputs(
         self,
-        prefix_len: int,
-        device,
-    ) -> tuple[tuple[Tensor, ...], list[str]]:
+        stage_name: str,
+        runtime_context: dict[str, Any],
+    ) -> ExportInputs:
+        if stage_name != "denoise":
+            raise ValueError(f"Unsupported runtime stage {stage_name!r}")
+
+        prefix_len = runtime_context["prefix_len"]
+        device = runtime_context["device"]
         batch_size = 1
         gemma_cfg = get_gemma_config(self.config.paligemma_variant)
         num_layers = gemma_cfg.depth
@@ -1201,7 +1216,11 @@ class PI05Policy(PreTrainedPolicy):
             tensors.append(v)
             names.append(f"past_value_{layer_idx}")
 
-        return tuple(tensors), names
+        return ExportInputs(
+            tensors=tuple(tensors),
+            input_names=names,
+            output_names=["v_t"],
+        )
 
     @classmethod
     def from_pretrained(

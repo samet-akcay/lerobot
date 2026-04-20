@@ -15,23 +15,21 @@
 # limitations under the License.
 """Export protocols for policy classes.
 
-This module defines protocols that policies can implement to provide
-clean, self-contained export logic. Instead of hardcoded wrappers in
-the exporter, each policy provides its own export modules.
+A single :class:`Exportable` Protocol defines protocols that policies can
+implement to provide clean, self-contained export logic. Policies declare their
+inference pattern via :meth:`Exportable.get_inference_type` and provide one or
+more named modules via :meth:`Exportable.get_export_modules`.
 
-Protocol hierarchy:
-- ExportableSinglePhase: For single-pass policies (ACT, VQ-BeT) that output actions directly
-- ExportableIterative: For iterative policies (Diffusion) with denoise step pattern
-- ExportableKVCache: For VLA policies (PI0, SmolVLA) with encode + denoise pattern
-
-Each protocol enables policies to encapsulate their own export logic, making
-the export system extensible without modifying the exporter itself.
+Multi-stage policies whose later-stage input shapes depend on a prior stage's
+output (e.g. KV-cache VLAs needing ``prefix_len`` from the encoder) implement
+the optional :meth:`Exportable.prepare_runtime_inputs` hook. Single-stage
+policies leave it unimplemented.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
     from torch import Tensor, nn
@@ -84,176 +82,91 @@ class KVCacheExportConfig:
     input_mapping: dict[str, str] = field(default_factory=dict)
 
 
-@runtime_checkable
-class ExportableKVCache(Protocol):
-    """Protocol for KV-cache policies (VLAs like PI0, SmolVLA).
+ExportConfig = SinglePhaseExportConfig | IterativeExportConfig | KVCacheExportConfig
 
-    KV-cache policies use:
-    1. Encoder phase: Process images/language/state → KV cache
-    2. Denoise phase: Iteratively denoise actions using cached KV
 
-    Implement this protocol to enable clean ONNX export without
-    external wrapper classes.
+@dataclass
+class ExportInputs:
+    """Tensor inputs and ONNX naming for a single export stage (module).
+
+    A stage is one entry returned by :meth:`Exportable.get_export_modules`.
+    For KV-cache policies, the encoder stage may also populate ``metadata``
+    with values needed by downstream stages (e.g. ``num_images``,
+    ``input_mapping``).
     """
 
-    def get_kv_cache_export_config(self) -> KVCacheExportConfig:
-        """Return export configuration with architecture details."""
-        ...
-
-    def get_encoder_module(self, num_images: int = 1) -> nn.Module:
-        """Return an nn.Module for the encoder phase.
-
-        The module should:
-        - Accept flattened inputs: (image_0, ..., img_mask_0, ..., lang_tokens, lang_masks, state)
-        - Output: (prefix_pad_mask, past_key_0, past_value_0, ...)
-
-        Args:
-            num_images: Number of image inputs to expect.
-
-        Returns:
-            nn.Module ready for ONNX export.
-        """
-        ...
-
-    def get_denoise_module(self) -> nn.Module:
-        """Return an nn.Module for a single denoise step.
-
-        The module should:
-        - Accept: (state?, x_t, timestep, prefix_pad_mask, past_key_0, ...)
-        - Output: v_t (velocity prediction)
-
-        Whether state is an input depends on state_in_denoise in config.
-
-        Returns:
-            nn.Module ready for ONNX export.
-        """
-        ...
-
-    def prepare_encoder_inputs(
-        self,
-        example_batch: dict[str, Tensor],
-    ) -> tuple[tuple[Tensor, ...], list[str], int, dict[str, str]]:
-        """Prepare inputs for encoder ONNX tracing.
-
-        Args:
-            example_batch: Example observation batch.
-
-        Returns:
-            Tuple of:
-            - input_tensors: Tuple of tensors for tracing
-            - input_names: Names for each input
-            - num_images: Number of image inputs
-            - input_mapping: Maps observation keys to ONNX input names
-        """
-        ...
-
-    def prepare_denoise_inputs(
-        self,
-        prefix_len: int,
-        device,
-    ) -> tuple[tuple[Tensor, ...], list[str]]:
-        """Prepare inputs for denoise step ONNX tracing.
-
-        Args:
-            prefix_len: Length of the prefix sequence from encoder.
-            device: Device to create tensors on.
-
-        Returns:
-            Tuple of (input_tensors, input_names)
-        """
-        ...
-
-
-def is_kv_cache_exportable(policy) -> bool:
-    """Check if a policy implements ExportableKVCache."""
-    return isinstance(policy, ExportableKVCache)
+    tensors: tuple[Tensor, ...]
+    input_names: list[str]
+    output_names: list[str]
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 @runtime_checkable
-class ExportableSinglePhase(Protocol):
-    """Protocol for single-phase policies (ACT, VQ-BeT).
+class Exportable(Protocol):
+    """Unified export protocol implemented by every exportable policy.
 
-    Single-phase policies produce an action chunk in one forward pass.
-    Implement this protocol to provide custom export logic.
+    A policy declares its inference pattern via :meth:`get_inference_type`,
+    returns a config dataclass via :meth:`get_export_config`, and exposes one
+    or more nn.Modules via :meth:`get_export_modules` keyed by stage name.
+
+    Stage names by convention:
+    - Single-stage policies (ACT, Diffusion): ``{"model": ...}``
+    - KV-cache policies (PI0, PI05, SmolVLA): ``{"encoder": ..., "denoise": ...}``
+
+    The runner consumes :meth:`prepare_inputs` for stages whose tracing tensors
+    can be derived from ``example_batch`` alone, then invokes
+    :meth:`prepare_runtime_inputs` for stages whose shapes depend on a prior
+    stage's output (e.g. denoise needing ``prefix_len`` from encoder output).
     """
 
-    def get_single_phase_export_config(self) -> SinglePhaseExportConfig:
-        """Return export configuration with action dimensions."""
-        ...
+    def get_inference_type(self) -> str:
+        """Return the inference pattern identifier.
 
-    def get_forward_module(self) -> nn.Module:
-        """Return an nn.Module for the forward pass.
-
-        The module should:
-        - Accept observation inputs as positional args
-        - Output: actions [B, chunk_size, action_dim]
-
-        Returns:
-            nn.Module ready for ONNX export.
+        One of: ``"action_chunking"``, ``"iterative"``, ``"kv_cache"``.
         """
         ...
 
-    def prepare_forward_inputs(
+    def get_export_config(self) -> ExportConfig:
+        """Return the export configuration dataclass for this policy."""
+        ...
+
+    def get_export_modules(self) -> dict[str, nn.Module]:
+        """Return one or more nn.Modules to export, keyed by stage name.
+
+        Single-stage policies return ``{"model": module}``. Multi-stage policies
+        (KV-cache) return ``{"encoder": ..., "denoise": ...}``. Each returned
+        module must be ``.eval()`` and ready for ONNX/ExecuTorch tracing.
+        """
+        ...
+
+    def prepare_inputs(self, example_batch: dict[str, Tensor]) -> dict[str, ExportInputs]:
+        """Return tracing inputs for stages that can be prepared from ``example_batch`` alone.
+
+        Stages whose input shapes depend on a prior stage's runtime output
+        (e.g. KV-cache ``denoise`` needing ``prefix_len``) MUST be omitted here
+        and provided via :meth:`prepare_runtime_inputs`.
+        """
+        ...
+
+    def prepare_runtime_inputs(
         self,
-        example_batch: dict[str, Tensor],
-    ) -> tuple[tuple[Tensor, ...], list[str], list[str]]:
-        """Prepare inputs for ONNX tracing.
+        stage_name: str,
+        runtime_context: dict[str, Any],
+    ) -> ExportInputs:
+        """Return tracing inputs for a stage whose shapes depend on prior-stage output.
+
+        Single-stage policies do not need to implement this method. Multi-stage
+        policies implement it for stages with runtime data dependencies.
 
         Args:
-            example_batch: Example observation batch.
-
-        Returns:
-            Tuple of (input_tensors, input_names, output_names)
+            stage_name: Name of the stage being prepared (matches a key in
+                ``get_export_modules``).
+            runtime_context: Values produced by prior stages. For KV-cache
+                ``denoise``, this contains ``{"prefix_len": int, "device": ...}``.
         """
         ...
 
 
-@runtime_checkable
-class ExportableIterative(Protocol):
-    """Protocol for iterative denoising policies (Diffusion).
-
-    Iterative policies refine actions over multiple denoising steps.
-    Implement this protocol to provide custom export logic.
-    """
-
-    def get_iterative_export_config(self) -> IterativeExportConfig:
-        """Return export configuration with denoising parameters."""
-        ...
-
-    def get_denoise_module(self) -> nn.Module:
-        """Return an nn.Module for a single denoise step.
-
-        The module should:
-        - Accept: (*observations, x_t, timestep)
-        - Output: v_t (velocity/noise prediction) [B, horizon, action_dim]
-
-        Returns:
-            nn.Module ready for ONNX export.
-        """
-        ...
-
-    def prepare_denoise_inputs(
-        self,
-        example_batch: dict[str, Tensor],
-    ) -> tuple[tuple[Tensor, ...], list[str], list[str]]:
-        """Prepare inputs for denoise step ONNX tracing.
-
-        Should include x_t and timestep in addition to observations.
-
-        Args:
-            example_batch: Example observation batch.
-
-        Returns:
-            Tuple of (input_tensors, input_names, output_names)
-        """
-        ...
-
-
-def is_single_phase_exportable(policy) -> bool:
-    """Check if a policy implements ExportableSinglePhase."""
-    return isinstance(policy, ExportableSinglePhase)
-
-
-def is_iterative_exportable(policy) -> bool:
-    """Check if a policy implements ExportableIterative."""
-    return isinstance(policy, ExportableIterative)
+def is_exportable(policy: Any) -> bool:
+    """Check if a policy implements the unified Exportable Protocol."""
+    return isinstance(policy, Exportable)

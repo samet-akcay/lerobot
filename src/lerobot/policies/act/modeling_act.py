@@ -33,13 +33,14 @@ from torch import Tensor, nn
 from torchvision.models._utils import IntermediateLayerGetter
 from torchvision.ops.misc import FrozenBatchNorm2d
 
+from lerobot.export.protocols import ExportInputs, SinglePhaseExportConfig
 from lerobot.utils.constants import ACTION, OBS_ENV_STATE, OBS_IMAGES, OBS_STATE
 
 from ..pretrained import PreTrainedPolicy
 from .configuration_act import ACTConfig
 
 
-class ACTForwardModule(nn.Module):
+class ACTInferenceModule(nn.Module):
     """Wrapper around ACT model for ONNX export.
 
     Accepts flat observation tensors as positional args and returns
@@ -94,35 +95,40 @@ class ACTPolicy(PreTrainedPolicy):
         self.reset()
 
     # ------------------------------------------------------------------
-    # Export protocol: ExportableSinglePhase
+    # Export protocol: Exportable
     # ------------------------------------------------------------------
 
     def get_inference_type(self) -> str:
         return "action_chunking"
 
-    def get_single_phase_export_config(self):
-        from lerobot.export.protocols import SinglePhaseExportConfig
-
+    def get_export_config(self) -> SinglePhaseExportConfig:
         return SinglePhaseExportConfig(
             chunk_size=self.config.chunk_size,
             action_dim=self.config.action_feature.shape[0],
             n_action_steps=self.config.n_action_steps,
         )
 
-    def get_forward_module(self) -> nn.Module:
+    def get_export_modules(self) -> dict[str, nn.Module]:
         input_keys = list(self._export_input_keys())
-        module = ACTForwardModule(self, input_keys)
+        module = ACTInferenceModule(self, input_keys)
         module.eval()
-        return module
+        return {"model": module}
 
-    def prepare_forward_inputs(
+    def prepare_inputs(
         self,
         example_batch: dict[str, Tensor],
-    ) -> tuple[tuple[Tensor, ...], list[str], list[str]]:
+    ) -> dict[str, ExportInputs]:
         input_keys = list(self._export_input_keys())
-        input_tensors = tuple(example_batch[k] for k in input_keys)
-        output_names = ["action"]
-        return input_tensors, input_keys, output_names
+        return {
+            "model": ExportInputs(
+                tensors=tuple(example_batch[k] for k in input_keys),
+                input_names=input_keys,
+                output_names=["action"],
+            )
+        }
+
+    def prepare_runtime_inputs(self, stage_name: str, runtime_context: dict[str, object]) -> ExportInputs:
+        raise NotImplementedError(f"{self.__class__.__name__} does not use runtime export inputs.")
 
     def _export_input_keys(self):
         keys: list[str] = []

@@ -60,6 +60,7 @@ import torch
 import torch.nn.functional as F  # noqa: N812
 from torch import Tensor, nn
 
+from lerobot.export.protocols import ExportInputs, KVCacheExportConfig
 from lerobot.utils.constants import ACTION, OBS_LANGUAGE_ATTENTION_MASK, OBS_LANGUAGE_TOKENS, OBS_STATE
 from lerobot.utils.device_utils import get_safe_dtype
 from lerobot.utils.import_utils import require_package
@@ -251,9 +252,7 @@ class SmolVLAPolicy(PreTrainedPolicy):
     def get_inference_type(self) -> str:
         return "kv_cache"
 
-    def get_kv_cache_export_config(self):
-        from lerobot.export.protocols import KVCacheExportConfig
-
+    def get_export_config(self) -> KVCacheExportConfig:
         vlm_config = self.model.vlm_with_expert.vlm.config.text_config
         return KVCacheExportConfig(
             num_layers=self.model.vlm_with_expert.num_vlm_layers,
@@ -266,20 +265,18 @@ class SmolVLAPolicy(PreTrainedPolicy):
             state_in_denoise=False,
         )
 
-    def get_encoder_module(self, num_images: int = 1) -> nn.Module:
-        module = SmolVLAEncoderModule(self.model, num_images=num_images)
-        module.eval()
-        return module
+    def get_export_modules(self) -> dict[str, nn.Module]:
+        num_images = len(self.config.image_features) if self.config.image_features else 0
+        encoder = SmolVLAEncoderModule(self.model, num_images=num_images)
+        denoise = SmolVLADenoiseModule(self.model)
+        encoder.eval()
+        denoise.eval()
+        return {"encoder": encoder, "denoise": denoise}
 
-    def get_denoise_module(self) -> nn.Module:
-        module = SmolVLADenoiseModule(self.model)
-        module.eval()
-        return module
-
-    def prepare_encoder_inputs(
+    def prepare_inputs(
         self,
         example_batch: dict[str, Tensor],
-    ) -> tuple[tuple[Tensor, ...], list[str], int, dict[str, str]]:
+    ) -> dict[str, ExportInputs]:
         device = next(self.parameters()).device
         images, img_masks = self.prepare_images(example_batch)
         lang_tokens = example_batch[OBS_LANGUAGE_TOKENS]
@@ -319,13 +316,31 @@ class SmolVLAPolicy(PreTrainedPolicy):
         names.append("state")
         input_mapping[OBS_STATE] = "state"
 
-        return tuple(tensors), names, num_images, input_mapping
+        output_names = ["prefix_pad_mask"]
+        num_layers = self.model.vlm_with_expert.num_vlm_layers
+        for layer_idx in range(num_layers):
+            output_names.append(f"past_key_{layer_idx}")
+            output_names.append(f"past_value_{layer_idx}")
 
-    def prepare_denoise_inputs(
+        return {
+            "encoder": ExportInputs(
+                tensors=tuple(tensors),
+                input_names=names,
+                output_names=output_names,
+                metadata={"num_images": num_images, "input_mapping": input_mapping},
+            )
+        }
+
+    def prepare_runtime_inputs(
         self,
-        prefix_len: int,
-        device,
-    ) -> tuple[tuple[Tensor, ...], list[str]]:
+        stage_name: str,
+        runtime_context: dict[str, object],
+    ) -> ExportInputs:
+        if stage_name != "denoise":
+            raise ValueError(f"Unsupported runtime stage {stage_name!r}")
+
+        prefix_len = runtime_context["prefix_len"]
+        device = runtime_context["device"]
         batch_size = 1
         vlm_config = self.model.vlm_with_expert.vlm.config.text_config
         num_layers = self.model.vlm_with_expert.num_vlm_layers
@@ -347,7 +362,11 @@ class SmolVLAPolicy(PreTrainedPolicy):
             tensors.append(v)
             names.append(f"past_value_{layer_idx}")
 
-        return tuple(tensors), names
+        return ExportInputs(
+            tensors=tuple(tensors),
+            input_names=names,
+            output_names=["v_t"],
+        )
 
     def reset(self):
         """This should be called whenever the environment is reset."""
