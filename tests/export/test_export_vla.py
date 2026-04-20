@@ -220,6 +220,89 @@ class TestPI05Export:
         )
 
     @pytest.mark.slow
+    def test_onnx_numerical_parity_with_normalization(self, tmp_path: Path):
+        """End-to-end parity with PI05's real normalization defaults (QUANTILES).
+
+        PI05 config defaults: STATE=QUANTILES, ACTION=QUANTILES, VISUAL=IDENTITY.
+        Validates the new quantile path in the runtime Normalizer end-to-end.
+        Note: PI05 predict_action_chunk does not consume state, so only ACTION
+        quantile denormalization is exercised against raw model output here.
+        """
+        pytest.importorskip("transformers")
+        from lerobot.configs.types import NormalizationMode
+        from lerobot.export import export_policy, load_exported_policy
+        from lerobot.utils.constants import OBS_LANGUAGE_ATTENTION_MASK, OBS_LANGUAGE_TOKENS
+
+        policy, batch = create_pi05_policy_and_batch(device="cuda")
+        policy.config.normalization_mapping = {
+            "VISUAL": NormalizationMode.IDENTITY,
+            "STATE": NormalizationMode.QUANTILES,
+            "ACTION": NormalizationMode.QUANTILES,
+        }
+        action_q01 = np.full(14, -1.5, dtype=np.float32)
+        action_q99 = np.full(14, 1.5, dtype=np.float32)
+        state_q01 = np.full(14, -2.0, dtype=np.float32)
+        state_q99 = np.full(14, 2.0, dtype=np.float32)
+        policy.config.stats = {
+            "observation.state": {"q01": state_q01.tolist(), "q99": state_q99.tolist()},
+            "action": {"q01": action_q01.tolist(), "q99": action_q99.tolist()},
+        }
+
+        torch.manual_seed(42)
+        np.random.seed(42)
+        noise = torch.randn(1, policy.config.chunk_size, policy.config.max_action_dim, device="cuda")
+
+        with torch.no_grad():
+            pytorch_normalized_output = policy.model.sample_actions(
+                images=[batch["observation.images.top"]],
+                img_masks=[torch.ones(1, dtype=torch.bool, device="cuda")],
+                tokens=batch[OBS_LANGUAGE_TOKENS],
+                masks=batch[OBS_LANGUAGE_ATTENTION_MASK],
+                noise=noise,
+            )
+
+        # PI05 internally pads action to max_action_dim; truncate to real action dim before denorm.
+        original_action_dim = policy.config.output_features["action"].shape[0]
+        pytorch_np = pytorch_normalized_output.cpu().numpy()[:, :, :original_action_dim]
+        # Inverse quantiles: (x+1)/2 * (q99-q01) + q01
+        pytorch_denormalized = (pytorch_np + 1.0) / 2.0 * (action_q99 - action_q01) + action_q01
+
+        package_path = export_policy(
+            policy,
+            tmp_path / "pi05_package",
+            backend="onnx",
+            example_batch=batch,
+            include_normalization=True,
+        )
+
+        import json
+
+        manifest = json.loads((package_path / "manifest.json").read_text())
+        preprocessors = manifest["model"]["preprocessors"] or []
+        postprocessors = manifest["model"]["postprocessors"] or []
+        pre_modes = {p["mode"] for p in preprocessors}
+        post_modes = {p["mode"] for p in postprocessors}
+        assert "quantiles" in pre_modes or "quantiles" in post_modes, (
+            f"Expected quantiles mode in manifest; pre={pre_modes}, post={post_modes}"
+        )
+        assert (package_path / "artifacts" / "stats.safetensors").exists()
+
+        runtime = load_exported_policy(package_path, backend="onnx", device="cpu")
+        obs_numpy = to_numpy(batch)
+        onnx_output = runtime.predict_action_chunk(obs_numpy, noise=noise.cpu().numpy())
+
+        if pytorch_denormalized.ndim == 3 and pytorch_denormalized.shape[0] == 1:
+            pytorch_denormalized = pytorch_denormalized[0]
+
+        assert_numerical_parity(
+            onnx_output,
+            pytorch_denormalized,
+            rtol=1e-4,
+            atol=1e-4,
+            msg="PI05 ONNX (with QUANTILES normalization) does not match PyTorch raw→denormalize",
+        )
+
+    @pytest.mark.slow
     def test_openvino_numerical_parity(self, tmp_path: Path):
         pytest.importorskip("transformers")
         pytest.importorskip("openvino")

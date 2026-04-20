@@ -308,6 +308,90 @@ class TestDiffusionNormalization:
         recovered = normalizer.denormalize_outputs(action, key="action")
         np.testing.assert_allclose(recovered, 0.5, atol=1e-6)
 
+    @pytest.mark.slow
+    def test_onnx_numerical_parity_with_normalization(self, tmp_path: Path):
+        """End-to-end parity with Diffusion's real normalization defaults.
+
+        Diffusion config defaults: STATE=min_max, VISUAL=mean_std, ACTION=min_max.
+        Compare exported package (with runtime Normalizer) vs PyTorch raw model
+        with manual normalize/denormalize.
+        """
+        import json
+
+        from lerobot.export import load_exported_policy
+        from lerobot.utils.constants import OBS_IMAGES
+
+        policy, batch = create_diffusion_policy_and_batch()
+        state_min = np.full(6, -2.0, dtype=np.float32)
+        state_max = np.full(6, 2.0, dtype=np.float32)
+        image_mean = np.full((3, 1, 1), 0.25, dtype=np.float32)
+        image_std = np.full((3, 1, 1), 0.5, dtype=np.float32)
+        action_min = np.full(6, -1.0, dtype=np.float32)
+        action_max = np.full(6, 1.0, dtype=np.float32)
+
+        policy.config.stats = {
+            "observation.state": {"min": state_min.tolist(), "max": state_max.tolist()},
+            "observation.images.top": {"mean": image_mean.tolist(), "std": image_std.tolist()},
+            "action": {"min": action_min.tolist(), "max": action_max.tolist()},
+        }
+
+        # Manual min_max for state, mean_std for image (Diffusion defaults).
+        state_t = batch["observation.state"]
+        image_t = batch["observation.images.top"]
+        normalized_state = (
+            (state_t - torch.from_numpy(state_min)) / torch.from_numpy(state_max - state_min)
+        ) * 2.0 - 1.0
+        normalized_image = (image_t - torch.from_numpy(image_mean)) / torch.from_numpy(image_std)
+
+        torch.manual_seed(42)
+        np.random.seed(42)
+        noise = torch.randn(1, policy.config.horizon, policy.config.action_feature.shape[0])
+
+        stacked_batch = {
+            "observation.state": normalized_state,
+            OBS_IMAGES: normalized_image.unsqueeze(2),
+        }
+
+        with torch.no_grad():
+            global_cond = policy.diffusion._prepare_global_conditioning(stacked_batch)
+            pytorch_normalized_output = policy.diffusion.conditional_sample(
+                1, global_cond=global_cond, noise=noise
+            )
+
+        # Manual denormalize (min_max for action).
+        pytorch_np = pytorch_normalized_output.cpu().numpy()
+        pytorch_denormalized = (pytorch_np + 1.0) / 2.0 * (action_max - action_min) + action_min
+
+        package_path = policy.to_onnx(
+            tmp_path / "diffusion_package",
+            example_batch=batch,
+            include_normalization=True,
+        )
+
+        manifest = json.loads((package_path / "manifest.json").read_text())
+        preprocessors = manifest["model"]["preprocessors"] or []
+        postprocessors = manifest["model"]["postprocessors"] or []
+        assert preprocessors, "Expected manifest to declare normalize preprocessors when stats are present"
+        assert postprocessors, (
+            "Expected manifest to declare denormalize postprocessors when stats are present"
+        )
+        assert (package_path / "artifacts" / "stats.safetensors").exists()
+
+        runtime = load_exported_policy(package_path, backend="onnx", device="cpu")
+        obs_numpy = to_numpy(batch)
+        onnx_output = runtime.predict_action_chunk(obs_numpy, noise=noise.numpy())
+
+        if pytorch_denormalized.ndim == 3 and pytorch_denormalized.shape[0] == 1:
+            pytorch_denormalized = pytorch_denormalized[0]
+
+        assert_numerical_parity(
+            onnx_output,
+            pytorch_denormalized,
+            rtol=1e-4,
+            atol=1e-4,
+            msg="Diffusion ONNX (with runtime normalization) does not match PyTorch normalize→model→denormalize",
+        )
+
 
 class TestDiffusionRuntime:
     @pytest.mark.slow
