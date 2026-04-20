@@ -101,4 +101,9 @@ def _detect_backend_name(manifest: dict[str, Any], artifacts_dir: Path) -> str:
             for artifact_name in artifact_names
         ):
             return backend_name
-    return "onnx"
+    suffixes = sorted({(artifacts_dir / name).suffix for name in artifact_names})
+    raise ValueError(
+        f"Cannot detect backend for artifacts {sorted(artifact_names)} "
+        f"(suffixes: {suffixes}). Registered backends: {sorted(BACKENDS)}. "
+        "Pass backend=... explicitly to load_exported_policy()."
+    )
