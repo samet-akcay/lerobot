@@ -206,6 +206,35 @@ def test_onnx_backend_round_trip_identity_module(tmp_path: Path) -> None:
     np.testing.assert_allclose(outputs["y"], np.array([[4.0, 5.0]], dtype=np.float32))
 
 
+def test_detect_backend_name_raises_for_unknown_suffix(tmp_path: Path) -> None:
+    from lerobot.export.policy import _detect_backend_name
+
+    artifact_path = tmp_path / "model.unknown_ext"
+    artifact_path.write_bytes(b"")
+    manifest = {"model": {"artifacts": {"model": "artifacts/model.unknown_ext"}}}
+
+    with pytest.raises(ValueError, match="Cannot detect backend"):
+        _detect_backend_name(manifest, tmp_path)
+
+
+def test_onnx_backend_serialize_raises_for_unknown_fixup(tmp_path: Path) -> None:
+    pytest.importorskip("onnxruntime")
+
+    backend = ONNXBackend()
+    module = ExportModule(
+        name="toy",
+        wrapper=nn.Identity().eval(),
+        example_inputs=(torch.tensor([[1.0, 2.0]], dtype=torch.float32),),
+        input_names=["x"],
+        output_names=["y"],
+        dynamic_axes=build_dynamic_axes(["x"], ["y"]),
+        hints={"onnx_fixups": ["nonexistent_fixup"]},
+    )
+
+    with pytest.raises(ValueError, match="Unknown onnx fixup 'nonexistent_fixup'"):
+        backend.serialize([module], tmp_path, opset_version=17)
+
+
 def importlib_available(module_name: str) -> bool:
     import importlib.util
 
@@ -213,25 +242,24 @@ def importlib_available(module_name: str) -> bool:
 
 
 def test_dropping_a_runner_file_auto_registers_without_init_edit(
+    tmp_path: Path,
     restore_registries: None,
 ) -> None:
-    """File-drop guarantee: writing a new module into runners/ registers it on package import.
+    """File-drop guarantee: a new module discoverable on the runners package path registers itself.
 
-    No edits to runners/__init__.py are required - the package uses pkgutil
-    auto-discovery so any file that calls @register_runner at import time
-    becomes part of RUNNERS the next time the package is imported.
+    Uses a temporary directory appended to ``runners.__path__`` rather than
+    writing into the installed source tree, so the test is isolated and does
+    not rely on the working copy being writable.
     """
     import importlib
-    import shutil
     import sys
 
     import lerobot.export.runners as runners_pkg
 
-    src_dir = Path(runners_pkg.__file__).parent
-    new_module_path = src_dir / "dropin_runner_for_test.py"
+    new_module_path = tmp_path / "dropin_runner_for_test.py"
     new_module_path.write_text(
         "from typing import ClassVar\n"
-        "from .base import register_runner\n"
+        "from lerobot.export.runners.base import register_runner\n"
         "\n"
         "@register_runner\n"
         "class DropinTestRunner:\n"
@@ -241,18 +269,25 @@ def test_dropping_a_runner_file_auto_registers_without_init_edit(
         "    def matches(cls, policy: object) -> bool:\n"
         "        return False\n"
     )
+    original_path = list(runners_pkg.__path__)
+    runners_pkg.__path__.append(str(tmp_path))
     try:
         for mod_name in list(sys.modules):
             if mod_name.startswith("lerobot.export.runners"):
                 del sys.modules[mod_name]
         reloaded = importlib.import_module("lerobot.export.runners")
+        reloaded.__path__.append(str(tmp_path))
+        import pkgutil
+
+        for module_info in pkgutil.iter_modules(reloaded.__path__):
+            if module_info.name == "dropin_runner_for_test":
+                importlib.import_module(f"lerobot.export.runners.{module_info.name}")
         types = {r.type for r in reloaded.RUNNERS}
         assert "dropin_test_marker" in types, (
             f"Auto-discovery failed: dropin_test_marker not in {sorted(types)}"
         )
     finally:
-        new_module_path.unlink(missing_ok=True)
-        shutil.rmtree(src_dir / "__pycache__", ignore_errors=True)
+        runners_pkg.__path__[:] = original_path
         for mod_name in list(sys.modules):
             if mod_name.startswith("lerobot.export.runners"):
                 del sys.modules[mod_name]
@@ -260,20 +295,19 @@ def test_dropping_a_runner_file_auto_registers_without_init_edit(
 
 
 def test_dropping_a_backend_file_auto_registers_without_init_edit(
+    tmp_path: Path,
     restore_registries: None,
 ) -> None:
-    """File-drop guarantee for backends/ - same as the runners test above."""
+    """File-drop guarantee for backends/ - same temp-path approach as runners test above."""
     import importlib
-    import shutil
     import sys
 
     import lerobot.export.backends as backends_pkg
 
-    src_dir = Path(backends_pkg.__file__).parent
-    new_module_path = src_dir / "dropin_backend_for_test.py"
+    new_module_path = tmp_path / "dropin_backend_for_test.py"
     new_module_path.write_text(
         "from typing import ClassVar\n"
-        "from .base import register_backend\n"
+        "from lerobot.export.backends.base import register_backend\n"
         "\n"
         "@register_backend\n"
         "class DropinTestBackend:\n"
@@ -287,17 +321,24 @@ def test_dropping_a_backend_file_auto_registers_without_init_edit(
         "    def open(self, artifacts_dir, manifest, *, device='cpu'):\n"
         "        raise NotImplementedError\n"
     )
+    original_path = list(backends_pkg.__path__)
+    backends_pkg.__path__.append(str(tmp_path))
     try:
         for mod_name in list(sys.modules):
             if mod_name.startswith("lerobot.export.backends"):
                 del sys.modules[mod_name]
         reloaded = importlib.import_module("lerobot.export.backends")
+        reloaded.__path__.append(str(tmp_path))
+        import pkgutil
+
+        for module_info in pkgutil.iter_modules(reloaded.__path__):
+            if module_info.name == "dropin_backend_for_test":
+                importlib.import_module(f"lerobot.export.backends.{module_info.name}")
         assert "dropin_backend_marker" in reloaded.BACKENDS, (
             f"Auto-discovery failed: dropin_backend_marker not in {sorted(reloaded.BACKENDS)}"
         )
     finally:
-        new_module_path.unlink(missing_ok=True)
-        shutil.rmtree(src_dir / "__pycache__", ignore_errors=True)
+        backends_pkg.__path__[:] = original_path
         for mod_name in list(sys.modules):
             if mod_name.startswith("lerobot.export.backends"):
                 del sys.modules[mod_name]

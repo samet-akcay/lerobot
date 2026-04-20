@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
@@ -215,7 +216,7 @@ def _fix_onnx_double_to_float(onnx_path: Path) -> None:
         onnx.save(model, str(onnx_path))
 
 
-_ONNX_FIXUPS: dict[str, Any] = {
+_ONNX_FIXUPS: dict[str, Callable[[Path], None]] = {
     "scatter_gather_dtypes": _fix_onnx_scatter_gather_dtypes,
     "double_to_float": _fix_onnx_double_to_float,
 }
