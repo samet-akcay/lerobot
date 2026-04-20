@@ -20,6 +20,7 @@ import json
 from pathlib import Path
 from typing import Any
 
+import numpy as np
 import pytest
 import torch
 
@@ -36,22 +37,6 @@ from tests.export.conftest import (  # noqa: E402
 def _read_manifest(package_path: Path) -> dict[str, Any]:
     with (package_path / "manifest.json").open("r", encoding="utf-8") as f:
         return json.load(f)
-
-
-def _session_io_names(session: Any, module_name: str) -> tuple[list[str], list[str]]:
-    """Return (input_names, output_names) for ``module_name`` from a BackendSession.
-
-    Different backends store the I/O names under different attributes
-    (``_input_names`` for ONNX/OpenVINO, ``_io_specs`` for ExecuTorch); this
-    keeps the test transport-agnostic without poking deep into private state
-    in every test method.
-    """
-    if hasattr(session, "_input_names"):
-        return session._input_names[module_name], session._output_names[module_name]
-    if hasattr(session, "_io_specs"):
-        spec = session._io_specs.get(module_name, {})
-        return spec.get("input_names", []), spec.get("output_names", [])
-    raise AssertionError(f"Unknown BackendSession layout: {type(session).__name__}")
 
 
 class TestACTExport:
@@ -117,7 +102,7 @@ class TestACTExport:
         assert_numerical_parity(
             onnx_output,
             pytorch_np,
-            rtol=1e-3,
+            rtol=1e-4,
             atol=1e-4,
             msg="ACT ONNX output does not match PyTorch output",
         )
@@ -161,9 +146,10 @@ class TestACTBackends:
         manifest = _read_manifest(package_path)
         session = BACKENDS["onnx"].open(package_path / "artifacts", manifest, device="cpu")
         assert isinstance(session, BackendSession)
-        input_names, output_names = _session_io_names(session, "model")
-        assert len(input_names) > 0
-        assert len(output_names) > 0
+
+        outputs = session.run("model", to_numpy(batch))
+        assert outputs
+        assert all(isinstance(value, np.ndarray) for value in outputs.values())
 
     def test_openvino_backend_initialization(self, tmp_path: Path):
         pytest.importorskip("openvino")
@@ -182,9 +168,10 @@ class TestACTBackends:
         manifest = _read_manifest(package_path)
         session = BACKENDS["openvino"].open(package_path / "artifacts", manifest, device="cpu")
         assert isinstance(session, BackendSession)
-        input_names, output_names = _session_io_names(session, "model")
-        assert len(input_names) > 0
-        assert len(output_names) > 0
+
+        outputs = session.run("model", to_numpy(batch))
+        assert outputs
+        assert all(isinstance(value, np.ndarray) for value in outputs.values())
 
     @pytest.mark.slow
     def test_openvino_numerical_parity_with_onnx(self, tmp_path: Path):
@@ -206,11 +193,8 @@ class TestACTBackends:
         ov_session = BACKENDS["openvino"].open(package_path / "artifacts", manifest, device="cpu")
 
         obs_numpy = to_numpy(batch)
-        input_names, _ = _session_io_names(onnx_session, "model")
-        inputs = {k: v for k, v in obs_numpy.items() if k in input_names}
-
-        onnx_outputs = onnx_session.run("model", inputs)
-        openvino_outputs = ov_session.run("model", inputs)
+        onnx_outputs = onnx_session.run("model", obs_numpy)
+        openvino_outputs = ov_session.run("model", obs_numpy)
 
         for name in onnx_outputs:
             assert_numerical_parity(
@@ -220,6 +204,39 @@ class TestACTBackends:
                 atol=1e-5,
                 msg=f"OpenVINO output '{name}' does not match ONNX output",
             )
+
+    @pytest.mark.slow
+    def test_openvino_numerical_parity_with_pytorch(self, tmp_path: Path):
+        pytest.importorskip("openvino")
+        from lerobot.export import load_exported_policy
+
+        policy, batch = create_act_policy_and_batch()
+
+        with torch.no_grad():
+            torch.manual_seed(42)
+            pytorch_output = policy.predict_action_chunk(batch)
+
+        package_path = policy.to_openvino(
+            tmp_path / "act_package",
+            example_batch=batch,
+            include_normalization=False,
+        )
+
+        runtime = load_exported_policy(package_path, backend="openvino", device="cpu")
+        obs_numpy = to_numpy(batch)
+        ov_output = runtime.predict_action_chunk(obs_numpy)
+
+        pytorch_np = pytorch_output.cpu().numpy()
+        if pytorch_np.ndim == 3 and pytorch_np.shape[0] == 1:
+            pytorch_np = pytorch_np[0]
+
+        assert_numerical_parity(
+            ov_output,
+            pytorch_np,
+            rtol=1e-4,
+            atol=1e-4,
+            msg="ACT OpenVINO output does not match PyTorch output",
+        )
 
 
 class TestACTRuntime:
@@ -297,7 +314,7 @@ class TestACTExecuTorch:
         assert_numerical_parity(
             et_output,
             pytorch_np,
-            rtol=1e-3,
+            rtol=1e-4,
             atol=1e-4,
             msg="ACT ExecuTorch output does not match PyTorch output",
         )
@@ -331,11 +348,8 @@ class TestACTExecuTorch:
         et_session = BACKENDS["executorch"].open(et_pkg / "artifacts", et_manifest, device="cpu")
 
         obs_numpy = to_numpy(batch)
-        input_names, _ = _session_io_names(onnx_session, "model")
-        inputs = {k: v for k, v in obs_numpy.items() if k in input_names}
-
-        onnx_outputs = onnx_session.run("model", inputs)
-        et_outputs = et_session.run("model", inputs)
+        onnx_outputs = onnx_session.run("model", obs_numpy)
+        et_outputs = et_session.run("model", obs_numpy)
 
         for name in onnx_outputs:
             et_name = name if name in et_outputs else next(iter(et_outputs))
@@ -377,11 +391,8 @@ class TestACTExecuTorch:
         et_session = BACKENDS["executorch"].open(et_pkg / "artifacts", et_manifest, device="cpu")
 
         obs_numpy = to_numpy(batch)
-        input_names, _ = _session_io_names(ov_session, "model")
-        inputs = {k: v for k, v in obs_numpy.items() if k in input_names}
-
-        ov_outputs = ov_session.run("model", inputs)
-        et_outputs = et_session.run("model", inputs)
+        ov_outputs = ov_session.run("model", obs_numpy)
+        et_outputs = et_session.run("model", obs_numpy)
 
         for name in ov_outputs:
             et_name = name if name in et_outputs else next(iter(et_outputs))

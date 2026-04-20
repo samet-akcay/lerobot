@@ -120,8 +120,8 @@ class TestDiffusionExport:
         assert_numerical_parity(
             onnx_output,
             pytorch_np,
-            rtol=1e-2,
-            atol=1e-3,
+            rtol=1e-4,
+            atol=1e-4,
             msg="Diffusion ONNX output does not match PyTorch output",
         )
 
@@ -157,6 +157,49 @@ class TestDiffusionExport:
             rtol=1e-4,
             atol=1e-4,
             msg="Diffusion OpenVINO output does not match ONNX output",
+        )
+
+    @pytest.mark.slow
+    def test_openvino_numerical_parity_with_pytorch(self, tmp_path: Path):
+        pytest.importorskip("openvino")
+        from lerobot.export import load_exported_policy
+        from lerobot.utils.constants import OBS_IMAGES
+
+        policy, batch = create_diffusion_policy_and_batch()
+
+        torch.manual_seed(42)
+        np.random.seed(42)
+        noise = torch.randn(1, policy.config.horizon, policy.config.action_feature.shape[0])
+
+        stacked_batch = {
+            "observation.state": batch["observation.state"],
+            OBS_IMAGES: batch["observation.images.top"].unsqueeze(2),
+        }
+
+        with torch.no_grad():
+            global_cond = policy.diffusion._prepare_global_conditioning(stacked_batch)
+            pytorch_output = policy.diffusion.conditional_sample(1, global_cond=global_cond, noise=noise)
+
+        package_path = policy.to_openvino(
+            tmp_path / "diffusion_package",
+            example_batch=batch,
+            include_normalization=False,
+        )
+
+        runtime = load_exported_policy(package_path, backend="openvino", device="cpu")
+        obs_numpy = to_numpy(batch)
+        ov_output = runtime.predict_action_chunk(obs_numpy, noise=noise.numpy())
+
+        pytorch_np = pytorch_output.cpu().numpy()
+        if pytorch_np.ndim == 3 and pytorch_np.shape[0] == 1:
+            pytorch_np = pytorch_np[0]
+
+        assert_numerical_parity(
+            ov_output,
+            pytorch_np,
+            rtol=1e-4,
+            atol=1e-4,
+            msg="Diffusion OpenVINO output does not match PyTorch output",
         )
 
 

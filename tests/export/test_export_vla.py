@@ -30,6 +30,7 @@ from tests.export.conftest import (  # noqa: E402
     create_pi0_policy_and_batch,
     create_pi05_policy_and_batch,
     create_smolvla_policy_and_batch,
+    require_executorch,
     skip_if_pi0_transformers_unavailable,
     to_numpy,
 )
@@ -250,6 +251,52 @@ class TestPI05Export:
             msg="PI05 OpenVINO output does not match ONNX output",
         )
 
+    @pytest.mark.slow
+    def test_openvino_numerical_parity_with_pytorch(self, tmp_path: Path):
+        skip_if_pi0_transformers_unavailable()
+        pytest.importorskip("openvino")
+        from lerobot.export import export_policy, load_exported_policy
+        from lerobot.utils.constants import OBS_LANGUAGE_ATTENTION_MASK, OBS_LANGUAGE_TOKENS
+
+        policy, batch = create_pi05_policy_and_batch(device="cuda")
+
+        torch.manual_seed(42)
+        np.random.seed(42)
+        noise = torch.randn(1, policy.config.chunk_size, policy.config.max_action_dim, device="cuda")
+
+        with torch.no_grad():
+            pytorch_output = policy.model.sample_actions(
+                images=[batch["observation.images.top"]],
+                img_masks=[torch.ones(1, dtype=torch.bool, device="cuda")],
+                tokens=batch[OBS_LANGUAGE_TOKENS],
+                masks=batch[OBS_LANGUAGE_ATTENTION_MASK],
+                noise=noise,
+            )
+
+        package_path = export_policy(
+            policy,
+            tmp_path / "pi05_package",
+            backend="openvino",
+            example_batch=batch,
+            include_normalization=False,
+        )
+
+        runtime = load_exported_policy(package_path, backend="openvino", device="cpu")
+        obs_numpy = to_numpy(batch)
+        ov_output = runtime.predict_action_chunk(obs_numpy, noise=noise.cpu().numpy())
+
+        pytorch_np = pytorch_output.cpu().numpy()
+        if pytorch_np.ndim == 3 and pytorch_np.shape[0] == 1:
+            pytorch_np = pytorch_np[0]
+
+        assert_numerical_parity(
+            ov_output,
+            pytorch_np,
+            rtol=1e-2,
+            atol=1e-2,
+            msg="PI05 OpenVINO output does not match PyTorch output",
+        )
+
 
 class TestSmolVLAExport:
     @pytest.mark.slow
@@ -381,4 +428,123 @@ class TestSmolVLAExport:
             rtol=1e-4,
             atol=1e-4,
             msg="SmolVLA OpenVINO output does not match ONNX output",
+        )
+
+
+class TestPI05ExecuTorch:
+    """ExecuTorch parity for the kv_cache runner family (Pi05)."""
+
+    @require_executorch
+    @pytest.mark.slow
+    def test_executorch_export_creates_valid_package(self, tmp_path: Path):
+        skip_if_pi0_transformers_unavailable()
+        from lerobot.export import export_policy
+
+        policy, batch = create_pi05_policy_and_batch(device="cuda")
+
+        package_path = export_policy(
+            policy,
+            tmp_path / "pi05_et",
+            backend="executorch",
+            example_batch=batch,
+        )
+
+        assert (package_path / "manifest.json").exists()
+        assert (package_path / "artifacts" / "encoder.pte").exists()
+        assert (package_path / "artifacts" / "denoise.pte").exists()
+        assert (package_path / "artifacts" / "encoder_io_spec.yaml").exists()
+        assert (package_path / "artifacts" / "denoise_io_spec.yaml").exists()
+
+    @require_executorch
+    @pytest.mark.slow
+    def test_executorch_numerical_parity_with_pytorch(self, tmp_path: Path):
+        """Exported ExecuTorch policy must match the torch policy on identical input.
+
+        Tolerance is looser than ACT/Diffusion because kv_cache models accumulate
+        more fp32 rounding error across the denoise loop and transformer layers;
+        the value (1e-2) matches the existing torch↔ONNX tolerance for Pi05.
+        """
+        skip_if_pi0_transformers_unavailable()
+        from lerobot.export import export_policy, load_exported_policy
+        from lerobot.utils.constants import OBS_LANGUAGE_ATTENTION_MASK, OBS_LANGUAGE_TOKENS
+
+        policy, batch = create_pi05_policy_and_batch(device="cuda")
+
+        torch.manual_seed(42)
+        np.random.seed(42)
+        noise = torch.randn(1, policy.config.chunk_size, policy.config.max_action_dim, device="cuda")
+
+        with torch.no_grad():
+            pytorch_output = policy.model.sample_actions(
+                images=[batch["observation.images.top"]],
+                img_masks=[torch.ones(1, dtype=torch.bool, device="cuda")],
+                tokens=batch[OBS_LANGUAGE_TOKENS],
+                masks=batch[OBS_LANGUAGE_ATTENTION_MASK],
+                noise=noise,
+            )
+
+        package_path = export_policy(
+            policy,
+            tmp_path / "pi05_et",
+            backend="executorch",
+            example_batch=batch,
+            include_normalization=False,
+        )
+
+        runtime = load_exported_policy(package_path, backend="executorch", device="cpu")
+        obs_numpy = to_numpy(batch)
+        et_output = runtime.predict_action_chunk(obs_numpy, noise=noise.cpu().numpy())
+
+        pytorch_np = pytorch_output.cpu().numpy()
+        if pytorch_np.ndim == 3 and pytorch_np.shape[0] == 1:
+            pytorch_np = pytorch_np[0]
+
+        assert_numerical_parity(
+            et_output,
+            pytorch_np,
+            rtol=1e-2,
+            atol=1e-2,
+            msg="PI05 ExecuTorch output does not match PyTorch output",
+        )
+
+    @require_executorch
+    @pytest.mark.slow
+    def test_executorch_numerical_parity_with_onnx(self, tmp_path: Path):
+        skip_if_pi0_transformers_unavailable()
+        from lerobot.export import export_policy, load_exported_policy
+
+        policy, batch = create_pi05_policy_and_batch(device="cuda")
+
+        onnx_pkg = export_policy(
+            policy,
+            tmp_path / "pi05_onnx",
+            backend="onnx",
+            example_batch=batch,
+            include_normalization=False,
+        )
+        et_pkg = export_policy(
+            policy,
+            tmp_path / "pi05_et",
+            backend="executorch",
+            example_batch=batch,
+            include_normalization=False,
+        )
+
+        np.random.seed(42)
+        noise = np.random.randn(1, policy.config.chunk_size, policy.config.max_action_dim).astype(np.float32)
+
+        obs_numpy = to_numpy(batch)
+
+        onnx_rt = load_exported_policy(onnx_pkg, backend="onnx", device="cpu")
+        et_rt = load_exported_policy(et_pkg, backend="executorch", device="cpu")
+
+        onnx_output = onnx_rt.predict_action_chunk(obs_numpy, noise=noise)
+        et_output = et_rt.predict_action_chunk(obs_numpy, noise=noise)
+
+        assert_numerical_parity(
+            et_output,
+            onnx_output,
+            rtol=1e-3,
+            atol=1e-3,
+            msg="PI05 ExecuTorch output does not match ONNX output",
         )
