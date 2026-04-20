@@ -14,15 +14,23 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from . import executorch, onnx, openvino
+"""Backend registry package.
+
+Auto-discovers every sibling module so that any new file dropped in this
+directory that decorates a class with ``@register_backend`` is registered
+without editing this file.
+"""
+
+import importlib
+import pkgutil
+
 from .base import BACKENDS, Backend, BackendSession, register_backend
 
-__all__ = [
-    "BACKENDS",
-    "Backend",
-    "BackendSession",
-    "register_backend",
-    "executorch",
-    "onnx",
-    "openvino",
-]
+# Import every sibling module so its @register_backend decorators run on import.
+for _module_info in pkgutil.iter_modules(__path__):
+    _name = _module_info.name
+    if _name.startswith("_") or _name == "base":
+        continue
+    importlib.import_module(f"{__name__}.{_name}")
+
+__all__ = ["BACKENDS", "Backend", "BackendSession", "register_backend"]

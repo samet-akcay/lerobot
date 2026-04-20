@@ -210,3 +210,95 @@ def importlib_available(module_name: str) -> bool:
     import importlib.util
 
     return importlib.util.find_spec(module_name) is not None
+
+
+def test_dropping_a_runner_file_auto_registers_without_init_edit(
+    restore_registries: None,
+) -> None:
+    """File-drop guarantee: writing a new module into runners/ registers it on package import.
+
+    No edits to runners/__init__.py are required - the package uses pkgutil
+    auto-discovery so any file that calls @register_runner at import time
+    becomes part of RUNNERS the next time the package is imported.
+    """
+    import importlib
+    import shutil
+    import sys
+
+    import lerobot.export.runners as runners_pkg
+
+    src_dir = Path(runners_pkg.__file__).parent
+    new_module_path = src_dir / "dropin_runner_for_test.py"
+    new_module_path.write_text(
+        "from typing import ClassVar\n"
+        "from .base import register_runner\n"
+        "\n"
+        "@register_runner\n"
+        "class DropinTestRunner:\n"
+        "    type: ClassVar[str] = 'dropin_test_marker'\n"
+        "\n"
+        "    @classmethod\n"
+        "    def matches(cls, policy: object) -> bool:\n"
+        "        return False\n"
+    )
+    try:
+        for mod_name in list(sys.modules):
+            if mod_name.startswith("lerobot.export.runners"):
+                del sys.modules[mod_name]
+        reloaded = importlib.import_module("lerobot.export.runners")
+        types = {r.type for r in reloaded.RUNNERS}
+        assert "dropin_test_marker" in types, (
+            f"Auto-discovery failed: dropin_test_marker not in {sorted(types)}"
+        )
+    finally:
+        new_module_path.unlink(missing_ok=True)
+        shutil.rmtree(src_dir / "__pycache__", ignore_errors=True)
+        for mod_name in list(sys.modules):
+            if mod_name.startswith("lerobot.export.runners"):
+                del sys.modules[mod_name]
+        importlib.import_module("lerobot.export.runners")
+
+
+def test_dropping_a_backend_file_auto_registers_without_init_edit(
+    restore_registries: None,
+) -> None:
+    """File-drop guarantee for backends/ - same as the runners test above."""
+    import importlib
+    import shutil
+    import sys
+
+    import lerobot.export.backends as backends_pkg
+
+    src_dir = Path(backends_pkg.__file__).parent
+    new_module_path = src_dir / "dropin_backend_for_test.py"
+    new_module_path.write_text(
+        "from typing import ClassVar\n"
+        "from .base import register_backend\n"
+        "\n"
+        "@register_backend\n"
+        "class DropinTestBackend:\n"
+        "    name: ClassVar[str] = 'dropin_backend_marker'\n"
+        "    extension: ClassVar[str] = '.dropin'\n"
+        "    runtime_only: ClassVar[bool] = True\n"
+        "\n"
+        "    def serialize(self, modules, artifacts_dir, **kwargs):\n"
+        "        return {}\n"
+        "\n"
+        "    def open(self, artifacts_dir, manifest, *, device='cpu'):\n"
+        "        raise NotImplementedError\n"
+    )
+    try:
+        for mod_name in list(sys.modules):
+            if mod_name.startswith("lerobot.export.backends"):
+                del sys.modules[mod_name]
+        reloaded = importlib.import_module("lerobot.export.backends")
+        assert "dropin_backend_marker" in reloaded.BACKENDS, (
+            f"Auto-discovery failed: dropin_backend_marker not in {sorted(reloaded.BACKENDS)}"
+        )
+    finally:
+        new_module_path.unlink(missing_ok=True)
+        shutil.rmtree(src_dir / "__pycache__", ignore_errors=True)
+        for mod_name in list(sys.modules):
+            if mod_name.startswith("lerobot.export.backends"):
+                del sys.modules[mod_name]
+        importlib.import_module("lerobot.export.backends")

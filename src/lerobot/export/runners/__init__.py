@@ -14,6 +14,23 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from . import action_chunking, iterative, kv_cache
+"""Runner registry package.
 
-__all__ = ["action_chunking", "iterative", "kv_cache"]
+Auto-discovers every sibling module so that any new file dropped in this
+directory that decorates a class with ``@register_runner`` is registered
+without editing this file.
+"""
+
+import importlib
+import pkgutil
+
+from .base import RUNNERS, Runner, register_runner
+
+# Import every sibling module so its @register_runner decorators run on import.
+for _module_info in pkgutil.iter_modules(__path__):
+    _name = _module_info.name
+    if _name.startswith("_") or _name == "base":
+        continue
+    importlib.import_module(f"{__name__}.{_name}")
+
+__all__ = ["RUNNERS", "Runner", "register_runner"]
