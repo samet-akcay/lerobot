@@ -361,6 +361,38 @@ class TestNormalizer:
         result = Normalizer.from_specs([], [], tmp_path)
         assert result is None
 
+    def test_normalizer_from_specs_raises_when_non_identity_lacks_artifact(self, tmp_path: Path):
+        from lerobot.export.manifest import ProcessorSpec
+        from lerobot.export.normalize import Normalizer
+
+        preprocessors = [
+            ProcessorSpec(
+                type="normalize",
+                mode="mean_std",
+                artifact=None,
+                features=["observation.state"],
+            )
+        ]
+
+        with pytest.raises(ValueError, match="non-identity normalization specs but no stats artifact"):
+            Normalizer.from_specs(preprocessors, None, tmp_path)
+
+    def test_normalizer_from_specs_allows_identity_only_without_artifact(self, tmp_path: Path):
+        from lerobot.export.manifest import ProcessorSpec
+        from lerobot.export.normalize import Normalizer
+
+        preprocessors = [
+            ProcessorSpec(
+                type="normalize",
+                mode="identity",
+                artifact=None,
+                features=["observation.image"],
+            )
+        ]
+
+        result = Normalizer.from_specs(preprocessors, None, tmp_path)
+        assert result is None
+
     def test_normalizer_quantiles_roundtrip(self, tmp_path: Path):
         from lerobot.export.manifest import ProcessorSpec
         from lerobot.export.normalize import Normalizer, save_stats_safetensors
