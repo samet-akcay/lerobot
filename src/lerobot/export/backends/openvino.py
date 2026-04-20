@@ -134,26 +134,6 @@ class OpenVINOBackend:
         )
 
 
-class OpenVINORuntimeAdapter:
-    def __init__(self, model_path: Path | str, device: str = "cpu"):
-        self._session = OpenVINOBackend().open(
-            Path(model_path).parent,
-            {"model": {"artifacts": {"model": f"artifacts/{Path(model_path).name}"}}},
-            device=device,
-        )
-
-    @property
-    def input_names(self) -> list[str]:
-        return self._session._input_names["model"]
-
-    @property
-    def output_names(self) -> list[str]:
-        return self._session._output_names["model"]
-
-    def run(self, inputs: dict[str, np.ndarray]) -> dict[str, np.ndarray]:
-        return self._session.run("model", inputs)
-
-
 def _normalize_device(device: str) -> str:
     device = device.lower()
     if device.startswith("cuda") or device.startswith("xpu"):

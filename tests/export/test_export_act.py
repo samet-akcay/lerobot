@@ -16,7 +16,9 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
+from typing import Any
 
 import pytest
 import torch
@@ -29,6 +31,27 @@ from tests.export.conftest import (  # noqa: E402
     require_executorch,
     to_numpy,
 )
+
+
+def _read_manifest(package_path: Path) -> dict[str, Any]:
+    with (package_path / "manifest.json").open("r", encoding="utf-8") as f:
+        return json.load(f)
+
+
+def _session_io_names(session: Any, module_name: str) -> tuple[list[str], list[str]]:
+    """Return (input_names, output_names) for ``module_name`` from a BackendSession.
+
+    Different backends store the I/O names under different attributes
+    (``_input_names`` for ONNX/OpenVINO, ``_io_specs`` for ExecuTorch); this
+    keeps the test transport-agnostic without poking deep into private state
+    in every test method.
+    """
+    if hasattr(session, "_input_names"):
+        return session._input_names[module_name], session._output_names[module_name]
+    if hasattr(session, "_io_specs"):
+        spec = session._io_specs.get(module_name, {})
+        return spec.get("input_names", []), spec.get("output_names", [])
+    raise AssertionError(f"Unknown BackendSession layout: {type(session).__name__}")
 
 
 class TestACTExport:
@@ -124,6 +147,7 @@ class TestACTExport:
 class TestACTBackends:
     def test_onnx_backend_initialization(self, tmp_path: Path):
         from lerobot.export import export_policy
+        from lerobot.export.backends import BACKENDS, BackendSession
 
         policy, batch = create_act_policy_and_batch()
 
@@ -134,19 +158,17 @@ class TestACTBackends:
             example_batch=batch,
         )
 
-        from lerobot.export.backends.onnx import ONNXRuntimeAdapter
-
-        model_path = package_path / "artifacts" / "model.onnx"
-        backend = ONNXRuntimeAdapter(model_path, device="cpu")
-
-        assert backend.input_names is not None
-        assert backend.output_names is not None
-        assert len(backend.input_names) > 0
-        assert len(backend.output_names) > 0
+        manifest = _read_manifest(package_path)
+        session = BACKENDS["onnx"].open(package_path / "artifacts", manifest, device="cpu")
+        assert isinstance(session, BackendSession)
+        input_names, output_names = _session_io_names(session, "model")
+        assert len(input_names) > 0
+        assert len(output_names) > 0
 
     def test_openvino_backend_initialization(self, tmp_path: Path):
         pytest.importorskip("openvino")
         from lerobot.export import export_policy
+        from lerobot.export.backends import BACKENDS, BackendSession
 
         policy, batch = create_act_policy_and_batch()
 
@@ -157,20 +179,18 @@ class TestACTBackends:
             example_batch=batch,
         )
 
-        from lerobot.export.backends.openvino import OpenVINORuntimeAdapter
-
-        model_path = package_path / "artifacts" / "model.onnx"
-        backend = OpenVINORuntimeAdapter(model_path, device="cpu")
-
-        assert backend.input_names is not None
-        assert backend.output_names is not None
-        assert len(backend.input_names) > 0
-        assert len(backend.output_names) > 0
+        manifest = _read_manifest(package_path)
+        session = BACKENDS["openvino"].open(package_path / "artifacts", manifest, device="cpu")
+        assert isinstance(session, BackendSession)
+        input_names, output_names = _session_io_names(session, "model")
+        assert len(input_names) > 0
+        assert len(output_names) > 0
 
     @pytest.mark.slow
     def test_openvino_numerical_parity_with_onnx(self, tmp_path: Path):
         pytest.importorskip("openvino")
         from lerobot.export import export_policy
+        from lerobot.export.backends import BACKENDS
 
         policy, batch = create_act_policy_and_batch()
 
@@ -181,19 +201,16 @@ class TestACTBackends:
             example_batch=batch,
         )
 
-        from lerobot.export.backends.onnx import ONNXRuntimeAdapter
-        from lerobot.export.backends.openvino import OpenVINORuntimeAdapter
-
-        model_path = package_path / "artifacts" / "model.onnx"
-
-        onnx_backend = ONNXRuntimeAdapter(model_path, device="cpu")
-        openvino_backend = OpenVINORuntimeAdapter(model_path, device="cpu")
+        manifest = _read_manifest(package_path)
+        onnx_session = BACKENDS["onnx"].open(package_path / "artifacts", manifest, device="cpu")
+        ov_session = BACKENDS["openvino"].open(package_path / "artifacts", manifest, device="cpu")
 
         obs_numpy = to_numpy(batch)
-        inputs = {k: v for k, v in obs_numpy.items() if k in onnx_backend.input_names}
+        input_names, _ = _session_io_names(onnx_session, "model")
+        inputs = {k: v for k, v in obs_numpy.items() if k in input_names}
 
-        onnx_outputs = onnx_backend.run(inputs)
-        openvino_outputs = openvino_backend.run(inputs)
+        onnx_outputs = onnx_session.run("model", inputs)
+        openvino_outputs = ov_session.run("model", inputs)
 
         for name in onnx_outputs:
             assert_numerical_parity(
@@ -289,6 +306,7 @@ class TestACTExecuTorch:
     @pytest.mark.slow
     def test_executorch_numerical_parity_with_onnx(self, tmp_path: Path):
         from lerobot.export import export_policy
+        from lerobot.export.backends import BACKENDS
 
         policy, batch = create_act_policy_and_batch()
 
@@ -307,17 +325,17 @@ class TestACTExecuTorch:
             include_normalization=False,
         )
 
-        from lerobot.export.backends.executorch import ExecuTorchRuntimeAdapter
-        from lerobot.export.backends.onnx import ONNXRuntimeAdapter
-
-        onnx_be = ONNXRuntimeAdapter(onnx_pkg / "artifacts" / "model.onnx", device="cpu")
-        et_be = ExecuTorchRuntimeAdapter(et_pkg / "artifacts" / "model.pte", device="cpu")
+        onnx_manifest = _read_manifest(onnx_pkg)
+        et_manifest = _read_manifest(et_pkg)
+        onnx_session = BACKENDS["onnx"].open(onnx_pkg / "artifacts", onnx_manifest, device="cpu")
+        et_session = BACKENDS["executorch"].open(et_pkg / "artifacts", et_manifest, device="cpu")
 
         obs_numpy = to_numpy(batch)
-        inputs = {k: v for k, v in obs_numpy.items() if k in onnx_be.input_names}
+        input_names, _ = _session_io_names(onnx_session, "model")
+        inputs = {k: v for k, v in obs_numpy.items() if k in input_names}
 
-        onnx_outputs = onnx_be.run(inputs)
-        et_outputs = et_be.run(inputs)
+        onnx_outputs = onnx_session.run("model", inputs)
+        et_outputs = et_session.run("model", inputs)
 
         for name in onnx_outputs:
             et_name = name if name in et_outputs else next(iter(et_outputs))
@@ -334,6 +352,7 @@ class TestACTExecuTorch:
     def test_executorch_numerical_parity_with_openvino(self, tmp_path: Path):
         pytest.importorskip("openvino")
         from lerobot.export import export_policy
+        from lerobot.export.backends import BACKENDS
 
         policy, batch = create_act_policy_and_batch()
 
@@ -352,17 +371,17 @@ class TestACTExecuTorch:
             include_normalization=False,
         )
 
-        from lerobot.export.backends.executorch import ExecuTorchRuntimeAdapter
-        from lerobot.export.backends.openvino import OpenVINORuntimeAdapter
-
-        ov_be = OpenVINORuntimeAdapter(onnx_pkg / "artifacts" / "model.onnx", device="cpu")
-        et_be = ExecuTorchRuntimeAdapter(et_pkg / "artifacts" / "model.pte", device="cpu")
+        onnx_manifest = _read_manifest(onnx_pkg)
+        et_manifest = _read_manifest(et_pkg)
+        ov_session = BACKENDS["openvino"].open(onnx_pkg / "artifacts", onnx_manifest, device="cpu")
+        et_session = BACKENDS["executorch"].open(et_pkg / "artifacts", et_manifest, device="cpu")
 
         obs_numpy = to_numpy(batch)
-        inputs = {k: v for k, v in obs_numpy.items() if k in ov_be.input_names}
+        input_names, _ = _session_io_names(ov_session, "model")
+        inputs = {k: v for k, v in obs_numpy.items() if k in input_names}
 
-        ov_outputs = ov_be.run(inputs)
-        et_outputs = et_be.run(inputs)
+        ov_outputs = ov_session.run("model", inputs)
+        et_outputs = et_session.run("model", inputs)
 
         for name in ov_outputs:
             et_name = name if name in et_outputs else next(iter(et_outputs))

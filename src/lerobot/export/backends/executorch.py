@@ -67,26 +67,6 @@ class ExecuTorchBackendSession:
         return result
 
 
-class ExecuTorchRuntimeAdapter:
-    def __init__(self, model_path: Path | str, device: str = "cpu"):
-        self._session = ExecuTorchBackend().open(
-            Path(model_path).parent,
-            {"model": {"artifacts": {"model": f"artifacts/{Path(model_path).name}"}}},
-            device=device,
-        )
-
-    @property
-    def input_names(self) -> list[str]:
-        return self._session._io_specs.get("model", {}).get("input_names", [])
-
-    @property
-    def output_names(self) -> list[str]:
-        return self._session._io_specs.get("model", {}).get("output_names", [])
-
-    def run(self, inputs: dict[str, np.ndarray]) -> dict[str, np.ndarray]:
-        return self._session.run("model", inputs)
-
-
 @register_backend
 class ExecuTorchBackend:
     name = "executorch"
