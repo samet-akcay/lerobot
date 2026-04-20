@@ -94,27 +94,14 @@ def skip_if_no_cuda():
 
 
 def skip_if_pi0_transformers_unavailable():
-    """Skip test if PI0-compatible transformers is not available."""
-    transformers = pytest.importorskip("transformers")
-    try:
-        import importlib
+    """Skip test if transformers is not importable.
 
-        check = importlib.import_module("transformers.models.siglip.check")
-
-        if not check.check_whether_transformers_replace_is_installed_correctly():
-            pytest.skip(
-                "PI0 requires a patched Transformers build (SigLIP replace hooks missing). "
-                "Install via: pip install 'lerobot[pi]' or "
-                "pip install transformers@git+https://github.com/huggingface/transformers.git@fix/lerobot_openpi "
-                f"(detected transformers={transformers.__version__})"
-            )
-    except Exception as e:
-        pytest.skip(
-            "PI0 requires a patched Transformers build (SigLIP replace hooks missing). "
-            "Install via: pip install 'lerobot[pi]' or "
-            "pip install transformers@git+https://github.com/huggingface/transformers.git@fix/lerobot_openpi "
-            f"(detected transformers={transformers.__version__}, err={type(e).__name__}: {e})"
-        )
+    Historically this gate required a patched ``fix/lerobot_openpi`` Transformers
+    build with SigLIP replace hooks. Stock ``transformers==5.3.0`` (LeRobot's
+    pinned version) provides everything PI0/PI05 need at runtime, so this is now
+    only a defensive importorskip.
+    """
+    pytest.importorskip("transformers")
 
 
 def to_numpy(batch: dict[str, torch.Tensor]) -> dict[str, np.ndarray]:
