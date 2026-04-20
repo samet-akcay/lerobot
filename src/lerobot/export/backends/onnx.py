@@ -72,26 +72,6 @@ class ONNXBackendSession:
         return dict(zip(self._output_names[name], outputs, strict=True))
 
 
-class ONNXRuntimeAdapter:
-    def __init__(self, model_path: Path | str, device: str = "cpu"):
-        self._session = ONNXBackend().open(
-            Path(model_path).parent,
-            {"model": {"artifacts": {"model": f"artifacts/{Path(model_path).name}"}}},
-            device=device,
-        )
-
-    @property
-    def input_names(self) -> list[str]:
-        return self._session._input_names["model"]
-
-    @property
-    def output_names(self) -> list[str]:
-        return self._session._output_names["model"]
-
-    def run(self, inputs: dict[str, np.ndarray]) -> dict[str, np.ndarray]:
-        return self._session.run("model", inputs)
-
-
 @register_backend
 class ONNXBackend:
     name = "onnx"
@@ -119,7 +99,10 @@ class ONNXBackend:
                 do_constant_folding=True,
                 dynamo=False,
             )
-            for fixup in module.hints.get("onnx_fixups", []):
+            for fixup_name in module.hints.get("onnx_fixups", []):
+                fixup = _ONNX_FIXUPS.get(fixup_name)
+                if fixup is None:
+                    raise ValueError(f"Unknown onnx fixup {fixup_name!r}. Available: {sorted(_ONNX_FIXUPS)}")
                 fixup(output_path)
             artifacts[module.name] = f"artifacts/{output_path.name}"
         return artifacts
@@ -230,3 +213,9 @@ def _fix_onnx_double_to_float(onnx_path: Path) -> None:
                     modified = True
     if modified:
         onnx.save(model, str(onnx_path))
+
+
+_ONNX_FIXUPS: dict[str, Any] = {
+    "scatter_gather_dtypes": _fix_onnx_scatter_gather_dtypes,
+    "double_to_float": _fix_onnx_double_to_float,
+}

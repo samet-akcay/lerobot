@@ -21,9 +21,8 @@ from typing import TYPE_CHECKING, Any, ClassVar
 import numpy as np
 import torch
 
-from ..backends.onnx import _fix_onnx_double_to_float, _fix_onnx_scatter_gather_dtypes
 from ..backends.base import BackendSession
-from ..protocols import Exportable, is_exportable
+from ..protocols import is_exportable
 from .action_chunking import policy_as_exportable
 from .base import ExportModule, build_dynamic_axes, build_normalizer, get_output_by_names, register_runner
 
@@ -93,7 +92,7 @@ class KVCacheRunner:
             output_names=denoise_stage.output_names,
             dynamic_axes=build_dynamic_axes(denoise_stage.input_names, denoise_stage.output_names),
             hints={
-                "onnx_fixups": [_fix_onnx_scatter_gather_dtypes, _fix_onnx_double_to_float],
+                "onnx_fixups": ["scatter_gather_dtypes", "double_to_float"],
                 "executorch_io_spec_extras": {"stage": "denoise"},
             },
         )
