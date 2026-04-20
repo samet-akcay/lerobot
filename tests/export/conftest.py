@@ -27,6 +27,18 @@ if TYPE_CHECKING:
     pass
 
 
+def require_onnx(func):
+    """Decorator that skips the test if onnx (the exporter package) is not available."""
+    from functools import wraps
+
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        pytest.importorskip("onnx")
+        return func(*args, **kwargs)
+
+    return wrapper
+
+
 def require_onnxruntime(func):
     """Decorator that skips the test if onnxruntime is not available."""
     from functools import wraps

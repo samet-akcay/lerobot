@@ -19,9 +19,10 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from tests.export.conftest import create_act_policy_and_batch
+from tests.export.conftest import create_act_policy_and_batch, require_onnx
 
 
+@require_onnx
 def test_manifest_is_stable_across_reexports(tmp_path: Path) -> None:
     from lerobot.export import export_policy
 
