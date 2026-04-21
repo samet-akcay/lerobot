@@ -27,10 +27,6 @@ from typing import Any
 import numpy as np
 from numpy.typing import NDArray
 
-# ---------------------------------------------------------------------------
-# Beta schedule helpers
-# ---------------------------------------------------------------------------
-
 
 def _compute_betas(
     num_train_timesteps: int,
@@ -58,11 +54,6 @@ def _betas_for_alpha_bar(num_train_timesteps: int, max_beta: float = 0.999) -> N
         t2 = (i + 1) / num_train_timesteps
         betas.append(min(1 - alpha_bar(t2) / alpha_bar(t1), max_beta))
     return np.array(betas, dtype=np.float32)
-
-
-# ---------------------------------------------------------------------------
-# DDPM Scheduler
-# ---------------------------------------------------------------------------
 
 
 class DDPMScheduler:
@@ -146,11 +137,6 @@ class DDPMScheduler:
         return pred_prev_sample
 
 
-# ---------------------------------------------------------------------------
-# DDIM Scheduler
-# ---------------------------------------------------------------------------
-
-
 class DDIMScheduler:
     """Denoising Diffusion Implicit Models scheduler."""
 
@@ -230,11 +216,6 @@ class DDIMScheduler:
             prev_sample = prev_sample + std_dev_t * noise
 
         return prev_sample
-
-
-# ---------------------------------------------------------------------------
-# Factory
-# ---------------------------------------------------------------------------
 
 
 def create_scheduler(

@@ -25,7 +25,7 @@ import numpy as np
 from . import backends as _backends  # noqa: F401
 from .backends import BACKENDS
 from .manifest import Manifest
-from .runners.base import RUNNERS, Runner, resolve_runner_type
+from .runners.base import RUNNERS, Runner
 
 if TYPE_CHECKING:
     from numpy.typing import NDArray
@@ -47,7 +47,7 @@ class ExportedPolicy:
         package_path = Path(package_path)
         manifest = Manifest.load(package_path / "manifest.json")
         manifest_dict = manifest.to_dict()
-        runner_type = resolve_runner_type(manifest.model.runner["type"])
+        runner_type = manifest.model.runner["type"]
         runner_cls = next((runner for runner in RUNNERS if runner.type == runner_type), None)
         if runner_cls is None:
             raise ValueError(f"Unknown runner type in manifest: {runner_type!r}")

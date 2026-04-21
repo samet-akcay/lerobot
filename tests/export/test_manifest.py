@@ -92,7 +92,6 @@ class TestManifestSchema:
         assert loaded.policy.name == "act"
         assert loaded.policy.source.repo_id == "lerobot/act_aloha"
         assert loaded.is_single_shot
-        assert loaded.is_action_chunking  # legacy alias still works
         assert not loaded.is_iterative
         assert not loaded.is_kv_cache
         assert loaded.model.runner["type"] == "single_shot"
@@ -106,25 +105,6 @@ class TestManifestSchema:
         assert loaded.hardware.robots[0].state.shape == [14]
         assert loaded.hardware.cameras[0].name == "top"
         assert loaded.metadata.created_by == "test"
-
-    def test_legacy_action_chunking_runner_type_still_loads(self, tmp_path: Path):
-        from lerobot.export.manifest import Manifest, ModelConfig, PolicyInfo
-
-        manifest = Manifest(
-            policy=PolicyInfo(name="act"),
-            model=ModelConfig(
-                n_obs_steps=1,
-                runner={"type": "action_chunking", "chunk_size": 50},
-                artifacts={"model": "artifacts/model.onnx"},
-            ),
-        )
-        path = tmp_path / "manifest.json"
-        manifest.save(path)
-
-        loaded = Manifest.load(path)
-        assert loaded.runner_type == "action_chunking"
-        assert loaded.is_single_shot
-        assert loaded.is_action_chunking
 
     def test_iterative_roundtrip(self, tmp_path: Path):
         from lerobot.export.manifest import (

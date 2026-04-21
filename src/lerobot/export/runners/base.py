@@ -13,6 +13,18 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+"""Runner protocol and shared building blocks.
+
+A :class:`Runner` is the export-time and runtime translator for one inference
+pattern (single-shot, iterative, KV-cache). At export it consumes a policy and
+produces ``ExportModule`` specs the backend will trace; at runtime it loads
+artifacts via a :class:`~lerobot.export.interfaces.BackendSession` and turns
+observations into action chunks.
+
+Concrete runners live alongside this module and self-register via
+:func:`register_runner`. To resolve which runner handles a manifest, callers
+match ``manifest.model.runner["type"]`` against ``Runner.type``.
+"""
 
 from __future__ import annotations
 
@@ -74,18 +86,6 @@ class Runner(Protocol):
 
 
 RUNNERS: list[type[Runner]] = []
-
-# Maps deprecated runner type aliases to their canonical name. Kept so that
-# packages exported by older versions still load. New manifests should use
-# the canonical type name; aliases may be removed in a future release.
-RUNNER_TYPE_ALIASES: dict[str, str] = {
-    "action_chunking": "single_shot",
-}
-
-
-def resolve_runner_type(runner_type: str) -> str:
-    """Return the canonical runner type, normalizing legacy aliases."""
-    return RUNNER_TYPE_ALIASES.get(runner_type, runner_type)
 
 
 def register_runner(cls: type[Runner]) -> type[Runner]:

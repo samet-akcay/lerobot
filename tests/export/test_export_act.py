@@ -318,31 +318,6 @@ class TestACTRuntime:
 
         assert isinstance(runtime, ExportedPolicy)
 
-    @pytest.mark.slow
-    def test_legacy_action_chunking_manifest_loads_at_runtime(self, tmp_path: Path):
-        from lerobot.export import ExportedPolicy, load_exported_policy
-
-        policy, batch = create_act_policy_and_batch()
-
-        package_path = policy.to_onnx(
-            tmp_path / "act_package_legacy",
-            example_batch=batch,
-        )
-
-        manifest_path = package_path / "manifest.json"
-        with manifest_path.open("r", encoding="utf-8") as f:
-            manifest = json.load(f)
-        manifest["model"]["runner"]["type"] = "action_chunking"
-        with manifest_path.open("w", encoding="utf-8") as f:
-            json.dump(manifest, f)
-
-        runtime = load_exported_policy(package_path, backend="onnx", device="cpu")
-        assert isinstance(runtime, ExportedPolicy)
-
-        action_chunk = runtime.predict_action_chunk(to_numpy(batch))
-        assert action_chunk.ndim == 2
-        assert action_chunk.shape[0] == policy.config.chunk_size
-
 
 class TestACTExecuTorch:
     @require_executorch

@@ -13,6 +13,19 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+"""Single-shot runner: one forward pass produces a full action chunk.
+
+Used by feedforward chunk-emitting policies such as ACT. The policy exposes a
+single ``"model"`` stage and emits a contiguous ``[chunk_size, action_dim]``
+action tensor per call.
+
+Example::
+
+    from lerobot.export import load_exported_policy
+
+    policy = load_exported_policy("act_package", backend="onnx")
+    actions = policy.predict_action_chunk(observation)
+"""
 
 from __future__ import annotations
 
@@ -41,10 +54,7 @@ class SingleShotRunner:
 
     @classmethod
     def matches(cls, policy: object) -> bool:
-        if not is_exportable(policy):
-            return False
-        inference_type = policy.get_inference_type()
-        return inference_type in (cls.type, "action_chunking")
+        return is_exportable(policy) and policy.get_inference_type() == cls.type
 
     @classmethod
     def export(

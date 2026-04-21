@@ -38,7 +38,6 @@ from .configs import (
     ExportConfig,
     IterativeExportConfig,
     KVCacheExportConfig,
-    SinglePhaseExportConfig,
     SingleShotExportConfig,
 )
 
@@ -84,8 +83,6 @@ class Exportable(Protocol):
         """Return the inference pattern identifier.
 
         One of: ``"single_shot"``, ``"iterative"``, ``"kv_cache"``.
-        The legacy value ``"action_chunking"`` is accepted as an alias
-        for ``"single_shot"``.
         """
         ...
 
@@ -141,7 +138,6 @@ __all__ = [
     "Exportable",
     "IterativeExportConfig",
     "KVCacheExportConfig",
-    "SinglePhaseExportConfig",
     "SingleShotExportConfig",
     "is_exportable",
 ]

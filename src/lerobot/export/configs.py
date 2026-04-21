@@ -39,11 +39,6 @@ class SingleShotExportConfig:
     n_action_steps: int | None = None
 
 
-# Deprecated alias retained for backward compatibility with the previous name.
-# Remove together with the ``action_chunking`` runner alias.
-SinglePhaseExportConfig = SingleShotExportConfig
-
-
 @dataclass
 class IterativeExportConfig:
     """Configuration for iterative (denoising) export.
@@ -84,6 +79,5 @@ __all__ = [
     "ExportConfig",
     "IterativeExportConfig",
     "KVCacheExportConfig",
-    "SinglePhaseExportConfig",
     "SingleShotExportConfig",
 ]

@@ -102,11 +102,6 @@ def _from_dict(
     return cls(**values)
 
 
-# ---------------------------------------------------------------------------
-# policy section
-# ---------------------------------------------------------------------------
-
-
 @dataclass
 class PolicySource:
     """Provenance information for the exported policy."""
@@ -136,11 +131,6 @@ class PolicyInfo:
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> PolicyInfo:
         return _from_dict(cls, data, converters={"source": PolicySource.from_dict})
-
-
-# ---------------------------------------------------------------------------
-# model section
-# ---------------------------------------------------------------------------
 
 
 @dataclass
@@ -211,11 +201,6 @@ class ModelConfig:
                 "postprocessors": lambda items: [ProcessorSpec.from_dict(item) for item in items],
             },
         )
-
-
-# ---------------------------------------------------------------------------
-# hardware section
-# ---------------------------------------------------------------------------
 
 
 @dataclass
@@ -296,11 +281,6 @@ class HardwareConfig:
         )
 
 
-# ---------------------------------------------------------------------------
-# metadata section
-# ---------------------------------------------------------------------------
-
-
 @dataclass
 class Metadata:
     """Export provenance metadata."""
@@ -316,11 +296,6 @@ class Metadata:
         return _from_dict(cls, data)
 
 
-# ---------------------------------------------------------------------------
-# Top-level Manifest
-# ---------------------------------------------------------------------------
-
-
 @dataclass
 class Manifest:
     """Policy-package manifest v1.0.
@@ -332,9 +307,6 @@ class Manifest:
       (e.g. ACT and other feedforward chunk-emitting policies)
     - ``iterative`` — multi-step denoising / flow-matching
     - ``kv_cache`` — encode once, then iterative denoise
-
-    The legacy alias ``action_chunking`` is accepted for ``single_shot`` so
-    manifests written before the rename keep loading.
     """
 
     policy: PolicyInfo
@@ -347,8 +319,6 @@ class Manifest:
     def __post_init__(self) -> None:
         self.validate()
 
-    # -- convenience properties ------------------------------------------
-
     @property
     def runner_type(self) -> str:
         """Return the runner type string (e.g. ``"single_shot"``)."""
@@ -356,12 +326,7 @@ class Manifest:
 
     @property
     def is_single_shot(self) -> bool:
-        return self.runner_type in ("single_shot", "action_chunking")
-
-    @property
-    def is_action_chunking(self) -> bool:
-        """Deprecated alias for :attr:`is_single_shot`. Kept for backward compat."""
-        return self.is_single_shot
+        return self.runner_type == "single_shot"
 
     @property
     def is_iterative(self) -> bool:
@@ -370,8 +335,6 @@ class Manifest:
     @property
     def is_kv_cache(self) -> bool:
         return self.runner_type == "kv_cache"
-
-    # -- validation ------------------------------------------------------
 
     def validate(self) -> None:
         """Validate required fields.
@@ -387,8 +350,6 @@ class Manifest:
             raise ValueError("At least one artifact is required in model.artifacts")
         if "type" not in self.model.runner:
             raise ValueError("model.runner must contain a 'type' key")
-
-    # -- serialization ---------------------------------------------------
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to a JSON-serializable dict."""
@@ -417,8 +378,6 @@ class Manifest:
                 "metadata": Metadata.from_dict,
             },
         )
-
-    # -- file I/O --------------------------------------------------------
 
     def save(self, path: Path | str) -> None:
         """Save manifest to a JSON file."""

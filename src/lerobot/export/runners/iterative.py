@@ -13,6 +13,19 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+"""Iterative runner: action chunk emerges from N denoising / flow-matching steps.
+
+Used by Diffusion Policy and similar policies that start from noise and refine
+``x_t`` over a fixed number of inference steps. Schedulers (DDPM/DDIM/Euler)
+are pure-numpy and parameterised by the manifest's ``model.runner`` block.
+
+Example::
+
+    from lerobot.export import load_exported_policy
+
+    policy = load_exported_policy("diffusion_package", backend="onnx")
+    actions = policy.predict_action_chunk(observation, num_steps=10)
+"""
 
 from __future__ import annotations
 
