@@ -126,3 +126,10 @@ jobs:
 
       - name: "Tier 4 — Test: viz"
         run: uv run pytest tests -vv --maxfail=10
+
+      # ── Tier 5: Export ───────────────────────────────────
+      - name: "Tier 5 — Install: export"
+        run: uv sync --locked --extra test --extra export
+
+      - name: "Tier 5 — Test: export"
+        run: uv run pytest tests -vv --maxfail=10

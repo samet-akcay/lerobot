@@ -53,6 +53,8 @@ def test_openvino_backend_is_runtime_only() -> None:
 
 
 def test_export_accepts_openvino_backend_alias(tmp_path: Path) -> None:
+    pytest.importorskip("onnx")
+    pytest.importorskip("openvino")
     policy, batch = create_act_policy_and_batch()
     out = export_policy(policy, tmp_path / "openvino_export", backend="openvino", example_batch=batch)
     assert (out / "manifest.json").exists()
@@ -189,6 +191,7 @@ def test_toy_runner_and_backend_work_without_core_edits(tmp_path: Path, restore_
 
 
 def test_onnx_backend_round_trip_identity_module(tmp_path: Path) -> None:
+    pytest.importorskip("onnx")
     pytest.importorskip("onnxruntime")
 
     backend = ONNXBackend()
@@ -249,6 +252,8 @@ def test_detect_backend_name_rejects_unknown_declared_backend(tmp_path: Path) ->
 
 
 def test_openvino_export_manifest_declares_backend(tmp_path: Path) -> None:
+    pytest.importorskip("onnx")
+    pytest.importorskip("openvino")
     policy, batch = create_act_policy_and_batch()
     out = export_policy(policy, tmp_path / "openvino_export", backend="openvino", example_batch=batch)
     manifest = json.loads((out / "manifest.json").read_text())
@@ -256,6 +261,7 @@ def test_openvino_export_manifest_declares_backend(tmp_path: Path) -> None:
 
 
 def test_onnx_backend_serialize_raises_for_unknown_fixup(tmp_path: Path) -> None:
+    pytest.importorskip("onnx")
     pytest.importorskip("onnxruntime")
 
     backend = ONNXBackend()
