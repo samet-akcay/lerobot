@@ -29,7 +29,7 @@ import pytest
 class TestManifestSchema:
     """Tests for the Manifest dataclass and serialization."""
 
-    def test_action_chunking_roundtrip(self, tmp_path: Path):
+    def test_single_shot_roundtrip(self, tmp_path: Path):
         from lerobot.export.manifest import (
             CameraConfig,
             HardwareConfig,
@@ -50,7 +50,7 @@ class TestManifestSchema:
             ),
             model=ModelConfig(
                 n_obs_steps=1,
-                runner={"type": "action_chunking", "chunk_size": 100, "n_action_steps": 100},
+                runner={"type": "single_shot", "chunk_size": 100, "n_action_steps": 100},
                 artifacts={"model": "artifacts/model.onnx"},
                 preprocessors=[
                     ProcessorSpec(
@@ -91,10 +91,11 @@ class TestManifestSchema:
         assert loaded.version == "1.0"
         assert loaded.policy.name == "act"
         assert loaded.policy.source.repo_id == "lerobot/act_aloha"
-        assert loaded.is_action_chunking
+        assert loaded.is_single_shot
+        assert loaded.is_action_chunking  # legacy alias still works
         assert not loaded.is_iterative
         assert not loaded.is_kv_cache
-        assert loaded.model.runner["type"] == "action_chunking"
+        assert loaded.model.runner["type"] == "single_shot"
         assert loaded.model.runner["chunk_size"] == 100
         assert loaded.model.artifacts["model"] == "artifacts/model.onnx"
         assert len(loaded.model.preprocessors) == 1
@@ -105,6 +106,25 @@ class TestManifestSchema:
         assert loaded.hardware.robots[0].state.shape == [14]
         assert loaded.hardware.cameras[0].name == "top"
         assert loaded.metadata.created_by == "test"
+
+    def test_legacy_action_chunking_runner_type_still_loads(self, tmp_path: Path):
+        from lerobot.export.manifest import Manifest, ModelConfig, PolicyInfo
+
+        manifest = Manifest(
+            policy=PolicyInfo(name="act"),
+            model=ModelConfig(
+                n_obs_steps=1,
+                runner={"type": "action_chunking", "chunk_size": 50},
+                artifacts={"model": "artifacts/model.onnx"},
+            ),
+        )
+        path = tmp_path / "manifest.json"
+        manifest.save(path)
+
+        loaded = Manifest.load(path)
+        assert loaded.runner_type == "action_chunking"
+        assert loaded.is_single_shot
+        assert loaded.is_action_chunking
 
     def test_iterative_roundtrip(self, tmp_path: Path):
         from lerobot.export.manifest import (
@@ -196,7 +216,7 @@ class TestManifestSchema:
             policy=PolicyInfo(name="test"),
             model=ModelConfig(
                 n_obs_steps=1,
-                runner={"type": "action_chunking"},
+                runner={"type": "single_shot"},
                 artifacts={"model": "model.onnx"},
             ),
         )
@@ -219,7 +239,7 @@ class TestManifestSchema:
                 policy=PolicyInfo(name="test"),
                 model=ModelConfig(
                     n_obs_steps=1,
-                    runner={"type": "action_chunking"},
+                    runner={"type": "single_shot"},
                     artifacts={"model": "m.onnx"},
                 ),
             )
@@ -245,7 +265,7 @@ class TestManifestSchema:
                 policy=PolicyInfo(name="test"),
                 model=ModelConfig(
                     n_obs_steps=1,
-                    runner={"type": "action_chunking"},
+                    runner={"type": "single_shot"},
                     artifacts={},
                 ),
             )
@@ -263,7 +283,7 @@ class TestManifestSchema:
         )
         assert m.runner_type == "iterative"
         assert m.is_iterative
-        assert not m.is_action_chunking
+        assert not m.is_single_shot
         assert not m.is_kv_cache
 
 

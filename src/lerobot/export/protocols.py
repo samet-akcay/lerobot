@@ -120,7 +120,9 @@ class Exportable(Protocol):
     def get_inference_type(self) -> str:
         """Return the inference pattern identifier.
 
-        One of: ``"action_chunking"``, ``"iterative"``, ``"kv_cache"``.
+        One of: ``"single_shot"``, ``"iterative"``, ``"kv_cache"``.
+        The legacy value ``"action_chunking"`` is accepted as an alias
+        for ``"single_shot"``.
         """
         ...
 

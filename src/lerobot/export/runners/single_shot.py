@@ -31,8 +31,8 @@ if TYPE_CHECKING:
 
 
 @register_runner
-class ActionChunkingRunner:
-    type: ClassVar[str] = "action_chunking"
+class SingleShotRunner:
+    type: ClassVar[str] = "single_shot"
 
     def __init__(self, manifest: dict[str, Any], artifacts_dir: Path, adapter: BackendSession):
         self._manifest = manifest
@@ -41,7 +41,10 @@ class ActionChunkingRunner:
 
     @classmethod
     def matches(cls, policy: object) -> bool:
-        return is_exportable(policy) and policy.get_inference_type() == cls.type
+        if not is_exportable(policy):
+            return False
+        inference_type = policy.get_inference_type()
+        return inference_type in (cls.type, "action_chunking")
 
     @classmethod
     def export(
@@ -74,7 +77,7 @@ class ActionChunkingRunner:
         manifest: dict[str, Any],
         artifacts_dir: Path,
         backend_session: BackendSession,
-    ) -> ActionChunkingRunner:
+    ) -> SingleShotRunner:
         return cls(manifest, artifacts_dir, backend_session)
 
     def predict_action_chunk(self, batch: dict[str, np.ndarray]) -> np.ndarray:
@@ -87,7 +90,7 @@ class ActionChunkingRunner:
             outputs,
             primary_name="action",
             fallback_names=[],
-            context="ActionChunkingRunner",
+            context="SingleShotRunner",
         )
 
         if self._normalizer:

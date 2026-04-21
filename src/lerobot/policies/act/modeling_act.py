@@ -99,7 +99,7 @@ class ACTPolicy(PreTrainedPolicy):
     # ------------------------------------------------------------------
 
     def get_inference_type(self) -> str:
-        return "action_chunking"
+        return "single_shot"
 
     def get_export_config(self) -> SinglePhaseExportConfig:
         return SinglePhaseExportConfig(

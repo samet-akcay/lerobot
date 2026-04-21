@@ -328,9 +328,13 @@ class Manifest:
     This is the converged schema shared by LeRobot and PhysicalAI.  The
     runner ``type`` determines the inference pattern:
 
-    - ``action_chunking`` — single forward pass with action chunk queue
+    - ``single_shot`` — one forward pass that emits the full action chunk
+      (e.g. ACT and other feedforward chunk-emitting policies)
     - ``iterative`` — multi-step denoising / flow-matching
     - ``kv_cache`` — encode once, then iterative denoise
+
+    The legacy alias ``action_chunking`` is accepted for ``single_shot`` so
+    manifests written before the rename keep loading.
     """
 
     policy: PolicyInfo
@@ -347,12 +351,17 @@ class Manifest:
 
     @property
     def runner_type(self) -> str:
-        """Return the runner type string (e.g. ``"action_chunking"``)."""
-        return self.model.runner.get("type", "action_chunking")
+        """Return the runner type string (e.g. ``"single_shot"``)."""
+        return self.model.runner.get("type", "single_shot")
+
+    @property
+    def is_single_shot(self) -> bool:
+        return self.runner_type in ("single_shot", "action_chunking")
 
     @property
     def is_action_chunking(self) -> bool:
-        return self.runner_type == "action_chunking"
+        """Deprecated alias for :attr:`is_single_shot`. Kept for backward compat."""
+        return self.is_single_shot
 
     @property
     def is_iterative(self) -> bool:
