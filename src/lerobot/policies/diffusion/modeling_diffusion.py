@@ -32,7 +32,8 @@ import torch.nn.functional as F  # noqa: N812
 import torchvision
 from torch import Tensor, nn
 
-from lerobot.export.protocols import ExportInputs, IterativeExportConfig
+from lerobot.export.configs import IterativeExportConfig
+from lerobot.export.protocols import ExportInputs
 from lerobot.utils.constants import ACTION, OBS_ENV_STATE, OBS_IMAGES, OBS_STATE
 from lerobot.utils.import_utils import _diffusers_available, require_package
 

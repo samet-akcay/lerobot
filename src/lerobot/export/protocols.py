@@ -13,17 +13,20 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Export protocols for policy classes.
+"""Export protocol implemented by policies.
 
-A single :class:`Exportable` Protocol defines protocols that policies can
-implement to provide clean, self-contained export logic. Policies declare their
-inference pattern via :meth:`Exportable.get_inference_type` and provide one or
-more named modules via :meth:`Exportable.get_export_modules`.
+The :class:`Exportable` Protocol defines the contract that policies implement
+to provide self-contained export logic. Policies declare their inference
+pattern via :meth:`Exportable.get_inference_type` and provide one or more
+named modules via :meth:`Exportable.get_export_modules`.
 
 Multi-stage policies whose later-stage input shapes depend on a prior stage's
 output (e.g. KV-cache VLAs needing ``prefix_len`` from the encoder) implement
 the optional :meth:`Exportable.prepare_runtime_inputs` hook. Single-stage
 policies leave it unimplemented.
+
+The export config dataclasses returned by :meth:`Exportable.get_export_config`
+live in :mod:`lerobot.export.configs`.
 """
 
 from __future__ import annotations
@@ -31,56 +34,16 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
+from .configs import (
+    ExportConfig,
+    IterativeExportConfig,
+    KVCacheExportConfig,
+    SinglePhaseExportConfig,
+    SingleShotExportConfig,
+)
+
 if TYPE_CHECKING:
     from torch import Tensor, nn
-
-
-@dataclass
-class SinglePhaseExportConfig:
-    """Configuration for single-phase (single-pass) export.
-
-    Used by policies like ACT and VQ-BeT that produce actions in one forward pass.
-    """
-
-    chunk_size: int
-    action_dim: int
-    n_action_steps: int | None = None
-
-
-@dataclass
-class IterativeExportConfig:
-    """Configuration for iterative (denoising) export.
-
-    Used by policies like Diffusion that iteratively refine actions.
-    """
-
-    horizon: int
-    action_dim: int
-    num_inference_steps: int
-    scheduler_type: str = "ddpm"
-
-
-@dataclass
-class KVCacheExportConfig:
-    """Configuration for KV-cache (VLA) export.
-
-    Captures architecture-specific information needed to export a KV-cache
-    policy and reconstruct the KV cache at runtime.
-    """
-
-    num_layers: int
-    num_kv_heads: int
-    head_dim: int
-
-    chunk_size: int
-    action_dim: int
-    state_dim: int | None
-    num_steps: int
-
-    input_mapping: dict[str, str] = field(default_factory=dict)
-
-
-ExportConfig = SinglePhaseExportConfig | IterativeExportConfig | KVCacheExportConfig
 
 
 @dataclass
@@ -170,3 +133,15 @@ class Exportable(Protocol):
 def is_exportable(policy: Any) -> bool:
     """Check if a policy implements the unified Exportable Protocol."""
     return isinstance(policy, Exportable)
+
+
+__all__ = [
+    "ExportConfig",
+    "ExportInputs",
+    "Exportable",
+    "IterativeExportConfig",
+    "KVCacheExportConfig",
+    "SinglePhaseExportConfig",
+    "SingleShotExportConfig",
+    "is_exportable",
+]

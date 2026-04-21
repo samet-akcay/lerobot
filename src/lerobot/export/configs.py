@@ -1,0 +1,89 @@
+#!/usr/bin/env python
+
+# Copyright 2026 The HuggingFace Inc. team. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+"""Export configuration dataclasses authored by policies and consumed by runners.
+
+Each runner family has a matching config dataclass:
+
+- :class:`SingleShotExportConfig` -> :class:`~lerobot.export.runners.single_shot.SingleShotRunner`
+- :class:`IterativeExportConfig`  -> :class:`~lerobot.export.runners.iterative.IterativeRunner`
+- :class:`KVCacheExportConfig`    -> :class:`~lerobot.export.runners.kv_cache.KVCacheRunner`
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+
+
+@dataclass
+class SingleShotExportConfig:
+    """Configuration for single-shot (single-pass) export.
+
+    Used by policies like ACT and VQ-BeT that produce actions in one forward pass.
+    """
+
+    chunk_size: int
+    action_dim: int
+    n_action_steps: int | None = None
+
+
+# Deprecated alias retained for backward compatibility with the previous name.
+# Remove together with the ``action_chunking`` runner alias.
+SinglePhaseExportConfig = SingleShotExportConfig
+
+
+@dataclass
+class IterativeExportConfig:
+    """Configuration for iterative (denoising) export.
+
+    Used by policies like Diffusion that iteratively refine actions.
+    """
+
+    horizon: int
+    action_dim: int
+    num_inference_steps: int
+    scheduler_type: str = "ddpm"
+
+
+@dataclass
+class KVCacheExportConfig:
+    """Configuration for KV-cache (VLA) export.
+
+    Captures architecture-specific information needed to export a KV-cache
+    policy and reconstruct the KV cache at runtime.
+    """
+
+    num_layers: int
+    num_kv_heads: int
+    head_dim: int
+
+    chunk_size: int
+    action_dim: int
+    state_dim: int | None
+    num_steps: int
+
+    input_mapping: dict[str, str] = field(default_factory=dict)
+
+
+ExportConfig = SingleShotExportConfig | IterativeExportConfig | KVCacheExportConfig
+
+
+__all__ = [
+    "ExportConfig",
+    "IterativeExportConfig",
+    "KVCacheExportConfig",
+    "SinglePhaseExportConfig",
+    "SingleShotExportConfig",
+]

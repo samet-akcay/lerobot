@@ -26,7 +26,8 @@ import torch
 import torch.nn.functional as F  # noqa: N812
 from torch import Tensor, nn
 
-from lerobot.export.protocols import ExportInputs, KVCacheExportConfig
+from lerobot.export.configs import KVCacheExportConfig
+from lerobot.export.protocols import ExportInputs
 from lerobot.utils.import_utils import _transformers_available, require_package
 
 # Conditional import for type checking and lazy loading
