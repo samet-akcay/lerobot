@@ -14,22 +14,52 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Neutral interface module for the export subsystem.
+"""Public protocols for the export subsystem.
 
-Holds Protocols that are shared between ``backends`` and ``runners`` so that
-neither package needs to import from the other to satisfy type references.
-This breaks the latent circular dependency where ``runners.base`` referenced
-``backends.base.BackendSession`` while ``backends.base`` referenced
-``runners.base.ExportModule``.
+This module is the canonical home for the ``Backend`` and ``BackendSession``
+Protocols. Both ``backends`` and ``runners`` packages import from here so
+neither needs to depend on the other; this is the boundary that keeps the
+two halves of the export subsystem decoupled.
+
+External consumers should import from this module:
+
+    from lerobot.export.interfaces import Backend, BackendSession
 """
 
 from __future__ import annotations
 
-from typing import Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any, ClassVar, Protocol, runtime_checkable
 
 import numpy as np
+
+if TYPE_CHECKING:
+    from pathlib import Path
+
+    from .runners.base import ExportModule
 
 
 @runtime_checkable
 class BackendSession(Protocol):
     def run(self, name: str, inputs: dict[str, np.ndarray]) -> dict[str, np.ndarray]: ...
+
+
+@runtime_checkable
+class Backend(Protocol):
+    name: ClassVar[str]
+    extension: ClassVar[str]
+    runtime_only: ClassVar[bool] = False
+
+    def serialize(
+        self,
+        modules: list[ExportModule],
+        artifacts_dir: Path,
+        **kwargs: Any,
+    ) -> dict[str, str]: ...
+
+    def open(
+        self,
+        artifacts_dir: Path,
+        manifest: dict[str, Any],
+        *,
+        device: str = "cpu",
+    ) -> BackendSession: ...

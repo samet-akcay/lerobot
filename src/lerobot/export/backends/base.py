@@ -17,37 +17,11 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, ClassVar, Protocol, runtime_checkable
+from typing import Any
 
-from ..interfaces import BackendSession
+from ..interfaces import Backend
 
-if TYPE_CHECKING:
-    from ..runners.base import ExportModule
-
-
-__all__ = ["BACKENDS", "Backend", "BackendSession", "register_backend", "resolve_artifact_paths"]
-
-
-@runtime_checkable
-class Backend(Protocol):
-    name: ClassVar[str]
-    extension: ClassVar[str]
-    runtime_only: ClassVar[bool] = False
-
-    def serialize(
-        self,
-        modules: list[ExportModule],
-        artifacts_dir: Path,
-        **kwargs: Any,
-    ) -> dict[str, str]: ...
-
-    def open(
-        self,
-        artifacts_dir: Path,
-        manifest: dict[str, Any],
-        *,
-        device: str = "cpu",
-    ) -> BackendSession: ...
+__all__ = ["BACKENDS", "register_backend", "resolve_artifact_paths"]
 
 
 BACKENDS: dict[str, Backend] = {}

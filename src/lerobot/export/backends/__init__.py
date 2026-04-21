@@ -19,12 +19,16 @@
 Auto-discovers every sibling module so that any new file dropped in this
 directory that decorates a class with ``@register_backend`` is registered
 without editing this file.
+
+The ``Backend`` and ``BackendSession`` Protocols live in
+:mod:`lerobot.export.interfaces`; import them from there.
 """
 
 import importlib
 import pkgutil
 
-from .base import BACKENDS, Backend, BackendSession, register_backend
+from ..interfaces import Backend, BackendSession
+from .base import BACKENDS, register_backend
 
 # Import every sibling module so its @register_backend decorators run on import.
 for _module_info in pkgutil.iter_modules(__path__):

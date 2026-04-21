@@ -193,7 +193,8 @@ class TestACTExport:
 class TestACTBackends:
     def test_onnx_backend_initialization(self, tmp_path: Path):
         from lerobot.export import export_policy
-        from lerobot.export.backends import BACKENDS, BackendSession
+        from lerobot.export.backends import BACKENDS
+        from lerobot.export.interfaces import BackendSession
 
         policy, batch = create_act_policy_and_batch()
 
@@ -215,7 +216,8 @@ class TestACTBackends:
     def test_openvino_backend_initialization(self, tmp_path: Path):
         pytest.importorskip("openvino")
         from lerobot.export import export_policy
-        from lerobot.export.backends import BACKENDS, BackendSession
+        from lerobot.export.backends import BACKENDS
+        from lerobot.export.interfaces import BackendSession
 
         policy, batch = create_act_policy_and_batch()
 
