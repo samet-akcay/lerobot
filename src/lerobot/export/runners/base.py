@@ -75,6 +75,18 @@ class Runner(Protocol):
 
 RUNNERS: list[type[Runner]] = []
 
+# Maps deprecated runner type aliases to their canonical name. Kept so that
+# packages exported by older versions still load. New manifests should use
+# the canonical type name; aliases may be removed in a future release.
+RUNNER_TYPE_ALIASES: dict[str, str] = {
+    "action_chunking": "single_shot",
+}
+
+
+def resolve_runner_type(runner_type: str) -> str:
+    """Return the canonical runner type, normalizing legacy aliases."""
+    return RUNNER_TYPE_ALIASES.get(runner_type, runner_type)
+
 
 def register_runner(cls: type[Runner]) -> type[Runner]:
     RUNNERS.append(cls)
