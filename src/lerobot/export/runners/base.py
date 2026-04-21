@@ -24,6 +24,19 @@ observations into action chunks.
 Concrete runners live alongside this module and self-register via
 :func:`register_runner`. To resolve which runner handles a manifest, callers
 match ``manifest.model.runner["type"]`` against ``Runner.type``.
+
+Example::
+
+    from lerobot.export.runners.base import RUNNERS, register_runner
+
+
+    @register_runner
+    class MyRunner:
+        type = "my_pattern"
+        ...
+
+
+    runner_cls = next(r for r in RUNNERS if r.type == "my_pattern")
 """
 
 from __future__ import annotations
