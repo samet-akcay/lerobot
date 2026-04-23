@@ -25,7 +25,7 @@ from lerobot.export.exporter import _select_runner
 from lerobot.export.runners.base import RUNNERS, ExportModule
 from lerobot.export.runners.iterative import IterativeRunner
 from lerobot.export.runners.kv_cache import KVCacheRunner
-from lerobot.export.runners.single_shot import SingleShotRunner
+from lerobot.export.runners.single_pass import SinglePassRunner
 from tests.export.conftest import (
     create_act_policy_and_batch,
     create_diffusion_policy_and_batch,
@@ -41,7 +41,7 @@ class UnknownPolicy(nn.Module):
 
 def test_select_runner_returns_expected_class_for_act() -> None:
     policy, _ = create_act_policy_and_batch()
-    assert _select_runner(policy) is SingleShotRunner
+    assert _select_runner(policy) is SinglePassRunner
 
 
 def test_select_runner_returns_expected_class_for_diffusion() -> None:
@@ -72,7 +72,7 @@ def test_select_runner_raises_for_unrecognized_policy() -> None:
 
 
 def test_runtime_registry_lookup_returns_concrete_classes() -> None:
-    assert next(r for r in RUNNERS if r.type == "single_shot") is SingleShotRunner
+    assert next(r for r in RUNNERS if r.type == "single_pass") is SinglePassRunner
     assert next(r for r in RUNNERS if r.type == "iterative") is IterativeRunner
     assert next(r for r in RUNNERS if r.type == "kv_cache") is KVCacheRunner
 
@@ -80,7 +80,7 @@ def test_runtime_registry_lookup_returns_concrete_classes() -> None:
 @pytest.mark.parametrize(
     ("factory", "kwargs", "expected_type", "expected_names"),
     [
-        (create_act_policy_and_batch, {"device": "cpu"}, SingleShotRunner, ["model"]),
+        (create_act_policy_and_batch, {"device": "cpu"}, SinglePassRunner, ["model"]),
         (create_diffusion_policy_and_batch, {"device": "cpu"}, IterativeRunner, ["model"]),
         (create_pi0_policy_and_batch, {"device": "cuda"}, KVCacheRunner, ["encoder", "denoise"]),
         (create_pi05_policy_and_batch, {"device": "cuda"}, KVCacheRunner, ["encoder", "denoise"]),
@@ -115,9 +115,9 @@ def test_runner_exports_have_structural_invariants(
         assert module.output_names
 
 
-def test_single_shot_runner_export_shape() -> None:
+def test_single_pass_runner_export_shape() -> None:
     policy, batch = create_act_policy_and_batch()
-    modules, _ = SingleShotRunner.export(policy, batch)
+    modules, _ = SinglePassRunner.export(policy, batch)
 
     assert len(modules) == 1
     assert modules[0].name == "model"

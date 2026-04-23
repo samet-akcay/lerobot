@@ -13,7 +13,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Single-shot runner: one forward pass produces a full action chunk.
+"""Single-pass runner: one forward pass produces a full action chunk.
 
 Used by feedforward chunk-emitting policies such as ACT. The policy exposes a
 single ``"model"`` stage and emits a contiguous ``[chunk_size, action_dim]``
@@ -44,8 +44,8 @@ if TYPE_CHECKING:
 
 
 @register_runner
-class SingleShotRunner:
-    type: ClassVar[str] = "single_shot"
+class SinglePassRunner:
+    type: ClassVar[str] = "single_pass"
 
     def __init__(self, manifest: dict[str, Any], artifacts_dir: Path, adapter: BackendSession):
         self._manifest = manifest
@@ -87,7 +87,7 @@ class SingleShotRunner:
         manifest: dict[str, Any],
         artifacts_dir: Path,
         backend_session: BackendSession,
-    ) -> SingleShotRunner:
+    ) -> SinglePassRunner:
         return cls(manifest, artifacts_dir, backend_session)
 
     def predict_action_chunk(self, batch: dict[str, np.ndarray]) -> np.ndarray:
@@ -100,7 +100,7 @@ class SingleShotRunner:
             outputs,
             primary_name="action",
             fallback_names=[],
-            context="SingleShotRunner",
+            context="SinglePassRunner",
         )
 
         if self._normalizer:

@@ -33,7 +33,7 @@ from torch import Tensor, nn
 from torchvision.models._utils import IntermediateLayerGetter
 from torchvision.ops.misc import FrozenBatchNorm2d
 
-from lerobot.export.configs import SingleShotExportConfig
+from lerobot.export.configs import SinglePassExportConfig
 from lerobot.export.protocols import ExportInputs
 from lerobot.utils.constants import ACTION, OBS_ENV_STATE, OBS_IMAGES, OBS_STATE
 
@@ -100,10 +100,10 @@ class ACTPolicy(PreTrainedPolicy):
     # ------------------------------------------------------------------
 
     def get_inference_type(self) -> str:
-        return "single_shot"
+        return "single_pass"
 
-    def get_export_config(self) -> SingleShotExportConfig:
-        return SingleShotExportConfig(
+    def get_export_config(self) -> SinglePassExportConfig:
+        return SinglePassExportConfig(
             chunk_size=self.config.chunk_size,
             action_dim=self.config.action_feature.shape[0],
             n_action_steps=self.config.n_action_steps,

@@ -29,7 +29,7 @@ import pytest
 class TestManifestSchema:
     """Tests for the Manifest dataclass and serialization."""
 
-    def test_single_shot_roundtrip(self, tmp_path: Path):
+    def test_single_pass_roundtrip(self, tmp_path: Path):
         from lerobot.export.manifest import (
             CameraConfig,
             HardwareConfig,
@@ -50,7 +50,7 @@ class TestManifestSchema:
             ),
             model=ModelConfig(
                 n_obs_steps=1,
-                runner={"type": "single_shot", "chunk_size": 100, "n_action_steps": 100},
+                runner={"type": "single_pass", "chunk_size": 100, "n_action_steps": 100},
                 artifacts={"model": "artifacts/model.onnx"},
                 preprocessors=[
                     ProcessorSpec(
@@ -91,10 +91,10 @@ class TestManifestSchema:
         assert loaded.version == "1.0"
         assert loaded.policy.name == "act"
         assert loaded.policy.source.repo_id == "lerobot/act_aloha"
-        assert loaded.is_single_shot
+        assert loaded.is_single_pass
         assert not loaded.is_iterative
         assert not loaded.is_kv_cache
-        assert loaded.model.runner["type"] == "single_shot"
+        assert loaded.model.runner["type"] == "single_pass"
         assert loaded.model.runner["chunk_size"] == 100
         assert loaded.model.artifacts["model"] == "artifacts/model.onnx"
         assert len(loaded.model.preprocessors) == 1
@@ -196,7 +196,7 @@ class TestManifestSchema:
             policy=PolicyInfo(name="test"),
             model=ModelConfig(
                 n_obs_steps=1,
-                runner={"type": "single_shot"},
+                runner={"type": "single_pass"},
                 artifacts={"model": "model.onnx"},
             ),
         )
@@ -219,7 +219,7 @@ class TestManifestSchema:
                 policy=PolicyInfo(name="test"),
                 model=ModelConfig(
                     n_obs_steps=1,
-                    runner={"type": "single_shot"},
+                    runner={"type": "single_pass"},
                     artifacts={"model": "m.onnx"},
                 ),
             )
@@ -245,7 +245,7 @@ class TestManifestSchema:
                 policy=PolicyInfo(name="test"),
                 model=ModelConfig(
                     n_obs_steps=1,
-                    runner={"type": "single_shot"},
+                    runner={"type": "single_pass"},
                     artifacts={},
                 ),
             )
@@ -263,7 +263,7 @@ class TestManifestSchema:
         )
         assert m.runner_type == "iterative"
         assert m.is_iterative
-        assert not m.is_single_shot
+        assert not m.is_single_pass
         assert not m.is_kv_cache
 
 

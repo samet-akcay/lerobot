@@ -38,7 +38,7 @@ from .configs import (
     ExportConfig,
     IterativeExportConfig,
     KVCacheExportConfig,
-    SingleShotExportConfig,
+    SinglePassExportConfig,
 )
 
 if TYPE_CHECKING:
@@ -82,7 +82,7 @@ class Exportable(Protocol):
     def get_inference_type(self) -> str:
         """Return the inference pattern identifier.
 
-        One of: ``"single_shot"``, ``"iterative"``, ``"kv_cache"``.
+        One of: ``"single_pass"``, ``"iterative"``, ``"kv_cache"``.
         """
         ...
 
@@ -138,6 +138,6 @@ __all__ = [
     "Exportable",
     "IterativeExportConfig",
     "KVCacheExportConfig",
-    "SingleShotExportConfig",
+    "SinglePassExportConfig",
     "is_exportable",
 ]

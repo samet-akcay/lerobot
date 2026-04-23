@@ -17,7 +17,7 @@
 
 Each runner family has a matching config dataclass:
 
-- :class:`SingleShotExportConfig` -> :class:`~lerobot.export.runners.single_shot.SingleShotRunner`
+- :class:`SinglePassExportConfig` -> :class:`~lerobot.export.runners.single_pass.SinglePassRunner`
 - :class:`IterativeExportConfig`  -> :class:`~lerobot.export.runners.iterative.IterativeRunner`
 - :class:`KVCacheExportConfig`    -> :class:`~lerobot.export.runners.kv_cache.KVCacheRunner`
 """
@@ -28,8 +28,8 @@ from dataclasses import dataclass, field
 
 
 @dataclass
-class SingleShotExportConfig:
-    """Configuration for single-shot (single-pass) export.
+class SinglePassExportConfig:
+    """Configuration for single-pass (single forward pass) export.
 
     Used by policies like ACT and VQ-BeT that produce actions in one forward pass.
     """
@@ -72,12 +72,12 @@ class KVCacheExportConfig:
     input_mapping: dict[str, str] = field(default_factory=dict)
 
 
-ExportConfig = SingleShotExportConfig | IterativeExportConfig | KVCacheExportConfig
+ExportConfig = SinglePassExportConfig | IterativeExportConfig | KVCacheExportConfig
 
 
 __all__ = [
     "ExportConfig",
     "IterativeExportConfig",
     "KVCacheExportConfig",
-    "SingleShotExportConfig",
+    "SinglePassExportConfig",
 ]

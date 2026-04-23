@@ -37,7 +37,7 @@ from ..interfaces import BackendSession
 from ..protocols import is_exportable
 from ..schedulers import create_scheduler
 from .base import ExportModule, build_dynamic_axes, build_normalizer, get_output_by_names, register_runner
-from .single_shot import policy_as_exportable
+from .single_pass import policy_as_exportable
 
 if TYPE_CHECKING:
     from pathlib import Path
