@@ -66,6 +66,12 @@ class OpenVINOBackendSession:
 
 @register_backend
 class OpenVINOBackend:
+    """OpenVINO runtime adapter for exported model artifacts.
+
+    OpenVINO stays runtime-only in this carve-out and loads the same ONNX
+    artifacts produced by the serializer backend.
+    """
+
     name: ClassVar[str] = "openvino"
     extension: ClassVar[str] = ".onnx"
     runtime_only: ClassVar[bool] = True

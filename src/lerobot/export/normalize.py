@@ -190,6 +190,12 @@ class Normalizer:
 
         stats = self._stats[key]
 
+        # Padded-action families emit predictions at max_action_dim while saved
+        # stats track the real action_dim. Mirror eager postprocessing behavior
+        # by trimming inverse-transform inputs to the stats vector length.
+        if inverse:
+            tensor = _trim_to_stats_length(tensor, stats)
+
         if mode == "mean_std":
             return self._apply_mean_std(tensor, stats, inverse)
         if mode == "min_max":
@@ -261,6 +267,19 @@ class Normalizer:
         if inverse:
             return (tensor + 1.0) / 2.0 * denom + lower
         return 2.0 * (tensor - lower) / denom - 1.0
+
+
+def _trim_to_stats_length(
+    tensor: NDArray[np.floating],
+    stats: dict[str, NDArray[np.floating]],
+) -> NDArray[np.floating]:
+    if tensor.ndim == 0:
+        return tensor
+    for vec in stats.values():
+        if vec.ndim == 1 and tensor.shape[-1] > vec.shape[0]:
+            return tensor[..., : vec.shape[0]]
+        break
+    return tensor
 
 
 def _load_stats(path: Path | str) -> dict[str, dict[str, NDArray[np.floating]]]:

@@ -16,10 +16,10 @@
 """Runner protocol and shared building blocks.
 
 A :class:`Runner` is the export-time and runtime translator for one inference
-pattern (single-shot, iterative, KV-cache). At export it consumes a policy and
-produces ``ExportModule`` specs the backend will trace; at runtime it loads
-artifacts via a :class:`~lerobot.export.interfaces.BackendSession` and turns
-observations into action chunks.
+pattern (action chunking or KV-cache in this carve-out). At export it consumes
+a policy and produces ``ExportModule`` specs the backend will trace; at runtime
+it loads artifacts via a :class:`~lerobot.export.interfaces.BackendSession` and
+turns observations into action chunks.
 
 Concrete runners live alongside this module and self-register via
 :func:`register_runner`. To resolve which runner handles a manifest, callers

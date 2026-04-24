@@ -317,10 +317,10 @@ class Manifest:
     This is the converged schema shared by LeRobot and PhysicalAI.  The
     runner ``type`` determines the inference pattern:
 
-    - ``single_pass`` — one forward pass that emits the full action chunk
+    - ``action_chunking`` — one forward pass that emits the full action chunk
       (e.g. ACT and other feedforward chunk-emitting policies)
-    - ``iterative`` — multi-step denoising / flow-matching
-    - ``kv_cache`` — encode once, then iterative denoise
+    - ``iterative`` — legacy multi-step denoising / flow-matching manifests
+    - ``kv_cache`` — encode once, then autoregressive token decoding
     """
 
     policy: PolicyInfo
@@ -335,8 +335,8 @@ class Manifest:
 
     @property
     def runner_type(self) -> str:
-        """Return the runner type string (e.g. ``"single_pass"``)."""
-        return self.model.runner.get("type", "single_pass")
+        """Return the runner type string (e.g. ``"action_chunking"``)."""
+        return self.model.runner.get("type", "action_chunking")
 
     @property
     def is_single_pass(self) -> bool:

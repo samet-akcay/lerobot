@@ -14,12 +14,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Public protocols for the export subsystem.
+"""Public runtime-neutral protocols for the export subsystem.
 
 This module is the canonical home for the ``Backend`` and ``BackendSession``
-Protocols. Both ``backends`` and ``runners`` packages import from here so
+protocols. Both ``backends`` and ``runners`` packages import from here so
 neither needs to depend on the other; this is the boundary that keeps the
-two halves of the export subsystem decoupled.
+two halves of the export subsystem decoupled regardless of artifact format
+or runtime engine.
 
 External consumers should import from this module:
 

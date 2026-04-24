@@ -139,7 +139,7 @@ def export_policy(
     preprocessors, postprocessors = build_processor_specs(
         policy,
         include_normalization=include_normalization and bool(get_policy_stats(policy)),
-        stats_artifact="artifacts/stats.safetensors",
+        stats_artifact="stats.safetensors",
     )
 
     save_policy_config(policy, assets_dir / "config.json")

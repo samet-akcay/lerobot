@@ -54,13 +54,13 @@ class TestManifestSchema:
             ),
             model=ModelConfig(
                 n_obs_steps=1,
-                runner={"type": "single_pass", "chunk_size": 100, "n_action_steps": 100},
-                artifacts={"model": "artifacts/model.onnx"},
+                runner={"type": "action_chunking", "chunk_size": 100, "n_action_steps": 100},
+                artifacts={"model": "model.onnx"},
                 preprocessors=[
                     ProcessorSpec(
                         type="normalize",
                         mode="mean_std",
-                        artifact="artifacts/stats.safetensors",
+                        artifact="stats.safetensors",
                         features=["observation.state"],
                     )
                 ],
@@ -68,7 +68,7 @@ class TestManifestSchema:
                     ProcessorSpec(
                         type="denormalize",
                         mode="mean_std",
-                        artifact="artifacts/stats.safetensors",
+                        artifact="stats.safetensors",
                         features=["action"],
                     )
                 ],
@@ -96,12 +96,13 @@ class TestManifestSchema:
         assert loaded.policy.name == "act"
         assert loaded.policy.source.repo_id == "lerobot/act_aloha"
         assert loaded.policy.source.class_path == "lerobot.policies.act.modeling_act.ACTPolicy"
-        assert loaded.is_single_pass
+        assert not loaded.is_single_pass
         assert not loaded.is_iterative
         assert not loaded.is_kv_cache
-        assert loaded.model.runner["type"] == "single_pass"
+        assert loaded.runner_type == "action_chunking"
+        assert loaded.model.runner["type"] == "action_chunking"
         assert loaded.model.runner["chunk_size"] == 100
-        assert loaded.model.artifacts["model"] == "artifacts/model.onnx"
+        assert loaded.model.artifacts["model"] == "model.onnx"
         assert "backend" not in loaded.model.to_dict()
         assert len(loaded.model.preprocessors) == 1
         assert loaded.model.preprocessors[0].type == "normalize"
@@ -137,7 +138,7 @@ class TestManifestSchema:
                     "clip_sample": True,
                     "clip_sample_range": 1.0,
                 },
-                artifacts={"model": "artifacts/model.onnx"},
+                artifacts={"model": "model.onnx"},
             ),
         )
 
@@ -177,8 +178,8 @@ class TestManifestSchema:
                     "input_mapping": {},
                 },
                 artifacts={
-                    "encoder": "artifacts/encoder.onnx",
-                    "denoise": "artifacts/denoise.onnx",
+                    "encoder": "encoder.onnx",
+                    "denoise": "denoise.onnx",
                 },
             ),
         )
@@ -191,8 +192,8 @@ class TestManifestSchema:
         assert loaded.is_kv_cache
         assert loaded.model.runner["num_layers"] == 18
         assert loaded.model.runner["scheduler"] == "euler"
-        assert loaded.model.artifacts["encoder"] == "artifacts/encoder.onnx"
-        assert loaded.model.artifacts["denoise"] == "artifacts/denoise.onnx"
+        assert loaded.model.artifacts["encoder"] == "encoder.onnx"
+        assert loaded.model.artifacts["denoise"] == "denoise.onnx"
 
     def test_minimal_manifest(self, tmp_path: Path):
         """Minimal manifest with only required fields."""
@@ -202,7 +203,7 @@ class TestManifestSchema:
             policy=PolicyInfo(name="test"),
             model=ModelConfig(
                 n_obs_steps=1,
-                runner={"type": "single_pass"},
+                runner={"type": "action_chunking"},
                 artifacts={"model": "model.onnx"},
             ),
         )
@@ -225,7 +226,7 @@ class TestManifestSchema:
                 policy=PolicyInfo(name="test"),
                 model=ModelConfig(
                     n_obs_steps=1,
-                    runner={"type": "single_pass"},
+                    runner={"type": "action_chunking"},
                     artifacts={"model": "m.onnx"},
                 ),
             )
@@ -251,10 +252,25 @@ class TestManifestSchema:
                 policy=PolicyInfo(name="test"),
                 model=ModelConfig(
                     n_obs_steps=1,
-                    runner={"type": "single_pass"},
+                    runner={"type": "action_chunking"},
                     artifacts={},
                 ),
             )
+
+    def test_action_chunking_runner_type_property(self):
+        from lerobot.export.manifest import Manifest, ModelConfig, PolicyInfo
+
+        m = Manifest(
+            policy=PolicyInfo(name="test"),
+            model=ModelConfig(
+                n_obs_steps=1,
+                runner={"type": "action_chunking", "chunk_size": 8},
+                artifacts={"model": "m.onnx"},
+            ),
+        )
+
+        assert m.runner_type == "action_chunking"
+        assert not m.is_single_pass
 
     def test_runner_type_property(self):
         from lerobot.export.manifest import Manifest, ModelConfig, PolicyInfo

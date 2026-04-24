@@ -13,12 +13,14 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""KV-cache runner: encode-once, then iteratively denoise with cached attention.
+"""KV-cache runner: encode once, then decode autoregressively with cached attention.
 
-Used by VLA policies (PI0, PI05, SmolVLA). The exported package contains two
-stages: ``encoder`` runs once per observation to produce ``past_*`` KV tensors
-and a ``prefix_pad_mask``; ``denoise`` then runs N flow-matching steps with the
-cached prefix and an evolving ``x_t``.
+This carve-out keeps the ``kv_cache`` manifest type for PI05 because the policy
+is an autoregressive token-decoding family rather than a two-phase iterative
+denoiser. The exported package contains two stages: ``encoder`` runs once per
+observation to produce ``past_*`` KV tensors and a ``prefix_pad_mask``;
+``denoise`` then advances decoding with the cached prefix and an evolving
+``x_t``.
 
 Example::
 

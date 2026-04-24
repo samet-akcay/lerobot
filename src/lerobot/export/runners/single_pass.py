@@ -45,7 +45,8 @@ if TYPE_CHECKING:
 
 @register_runner
 class SinglePassRunner:
-    type: ClassVar[str] = "single_pass"
+    type: ClassVar[str] = "action_chunking"
+    inference_type: ClassVar[str] = "single_pass"
 
     def __init__(self, manifest: dict[str, Any], artifacts_dir: Path, adapter: BackendSession):
         self._manifest = manifest
@@ -54,7 +55,7 @@ class SinglePassRunner:
 
     @classmethod
     def matches(cls, policy: object) -> bool:
-        return is_exportable(policy) and policy.get_inference_type() == cls.type
+        return is_exportable(policy) and policy.get_inference_type() == cls.inference_type
 
     @classmethod
     def export(

@@ -70,7 +70,7 @@ def test_act_normalization_specs_validate_and_roundtrip() -> None:
     preprocessors, postprocessors = build_processor_specs(
         ACTPolicyStub(),
         include_normalization=True,
-        stats_artifact="artifacts/stats.safetensors",
+        stats_artifact="stats.safetensors",
     )
 
     assert [spec.type for spec in preprocessors] == ["normalize"]
@@ -84,7 +84,7 @@ def test_pi05_processor_specs_validate_and_roundtrip() -> None:
     preprocessors, postprocessors = build_processor_specs(
         PI05PolicyStub(),
         include_normalization=True,
-        stats_artifact="artifacts/stats.safetensors",
+        stats_artifact="stats.safetensors",
     )
 
     assert [spec.type for spec in preprocessors] == [
@@ -112,7 +112,7 @@ def test_manifest_processor_specs_roundtrip_preserves_flat_custom_params(tmp_pat
     preprocessors, postprocessors = build_processor_specs(
         PI05PolicyStub(),
         include_normalization=True,
-        stats_artifact="artifacts/stats.safetensors",
+        stats_artifact="stats.safetensors",
     )
 
     manifest = Manifest(
@@ -123,7 +123,7 @@ def test_manifest_processor_specs_roundtrip_preserves_flat_custom_params(tmp_pat
         model=ModelConfig(
             n_obs_steps=1,
             runner={"type": "kv_cache"},
-            artifacts={"encoder": "artifacts/encoder.onnx", "denoise": "artifacts/denoise.onnx"},
+            artifacts={"encoder": "encoder.onnx", "denoise": "denoise.onnx"},
             preprocessors=preprocessors,
             postprocessors=postprocessors,
         ),

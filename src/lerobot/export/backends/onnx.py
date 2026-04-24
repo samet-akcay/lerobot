@@ -105,7 +105,7 @@ class ONNXBackend:
                 if fixup is None:
                     raise ValueError(f"Unknown onnx fixup {fixup_name!r}. Available: {sorted(_ONNX_FIXUPS)}")
                 fixup(output_path)
-            artifacts[module.name] = f"artifacts/{output_path.name}"
+            artifacts[module.name] = output_path.name
         return artifacts
 
     def open(
