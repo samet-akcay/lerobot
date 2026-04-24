@@ -44,7 +44,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Callable
-from dataclasses import MISSING, dataclass, fields, is_dataclass
+from dataclasses import MISSING, dataclass, field, fields, is_dataclass
 from pathlib import Path
 from typing import Any
 
@@ -143,16 +143,39 @@ class ProcessorSpec:
     """
 
     type: str
+    class_path: str | None = None
     mode: str | None = None
     artifact: str | None = None
     features: list[str] | None = None
+    extra_params: dict[str, object] = field(default_factory=dict)
 
-    def to_dict(self) -> dict[str, Any]:
-        return _to_dict(self)
+    def to_dict(self) -> dict[str, object]:
+        result: dict[str, object] = {"type": self.type}
+        if self.class_path is not None:
+            result["class_path"] = self.class_path
+        if self.mode is not None:
+            result["mode"] = self.mode
+        if self.artifact is not None:
+            result["artifact"] = self.artifact
+        if self.features is not None:
+            result["features"] = self.features
+        for key, value in self.extra_params.items():
+            if value is not None:
+                result[key] = value
+        return result
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> ProcessorSpec:
-        return _from_dict(cls, data)
+        known_fields = {"type", "class_path", "mode", "artifact", "features"}
+        extra_params = {key: value for key, value in data.items() if key not in known_fields}
+        return cls(
+            type=data["type"],
+            class_path=data.get("class_path"),
+            mode=data.get("mode"),
+            artifact=data.get("artifact"),
+            features=data.get("features"),
+            extra_params=extra_params,
+        )
 
 
 @dataclass

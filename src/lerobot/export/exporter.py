@@ -38,12 +38,63 @@ from ._package_utils import (
 from .backends import BACKENDS
 from .manifest import Manifest, Metadata, ModelConfig, PolicyInfo, PolicySource, ProcessorSpec
 from .normalize import save_stats_safetensors
+from .processors import (
+    emit_denormalize_processor_specs,
+    emit_normalize_processor_specs,
+    emit_pi05_processor_specs,
+)
 from .runners.base import RUNNERS, Runner
 
 if TYPE_CHECKING:
     from lerobot.policies.pretrained import PreTrainedPolicy
 
 logger = logging.getLogger(__name__)
+
+
+def build_processor_specs(
+    policy: PreTrainedPolicy,
+    *,
+    include_normalization: bool,
+    stats_artifact: str,
+) -> tuple[list[ProcessorSpec], list[ProcessorSpec]]:
+    preprocessors: list[ProcessorSpec] = []
+    postprocessors: list[ProcessorSpec] = []
+    pi05_preprocessors: list[dict[str, object]] = []
+    pi05_postprocessors: list[dict[str, object]] = []
+
+    if _is_pi05_policy(policy):
+        pi05_preprocessors, pi05_postprocessors = emit_pi05_processor_specs(policy.config)
+        preprocessors.extend(ProcessorSpec.from_dict(spec) for spec in pi05_preprocessors[:1])
+
+    if include_normalization:
+        input_features = get_normalized_input_features(policy)
+        preprocessors.extend(
+            ProcessorSpec.from_dict(spec)
+            for spec in emit_normalize_processor_specs(
+                get_normalization_groups(policy, input_features),
+                artifact=stats_artifact,
+            )
+        )
+        postprocessors.extend(
+            ProcessorSpec.from_dict(spec)
+            for spec in emit_denormalize_processor_specs(
+                get_normalization_groups(policy, ["action"]),
+                artifact=stats_artifact,
+            )
+        )
+
+    if _is_pi05_policy(policy):
+        preprocessors.extend(ProcessorSpec.from_dict(spec) for spec in pi05_preprocessors[1:])
+        postprocessors.extend(ProcessorSpec.from_dict(spec) for spec in pi05_postprocessors)
+
+    return preprocessors, postprocessors
+
+
+def _is_pi05_policy(policy: PreTrainedPolicy) -> bool:
+    policy_cls = type(policy)
+    return policy_cls.__name__ == "PI05Policy" or policy_cls.__module__.startswith(
+        "lerobot.policies.pi05."
+    )
 
 
 def export_policy(
@@ -75,32 +126,16 @@ def export_policy(
         raise ValueError(f"Backend {serialization_backend!r} is runtime-only and cannot serialize a model.")
     artifacts = backend_impl.serialize(modules, artifacts_dir, opset_version=opset_version)
 
-    preprocessors: list[ProcessorSpec] = []
-    postprocessors: list[ProcessorSpec] = []
     if include_normalization:
         stats = get_policy_stats(policy)
         if stats:
             stats_path = artifacts_dir / "stats.safetensors"
             save_stats_safetensors(stats, stats_path)
-            input_features = get_normalized_input_features(policy)
-            for mode, feats in get_normalization_groups(policy, input_features):
-                preprocessors.append(
-                    ProcessorSpec(
-                        type="normalize",
-                        mode=mode,
-                        artifact="artifacts/stats.safetensors",
-                        features=feats,
-                    )
-                )
-            for mode, feats in get_normalization_groups(policy, ["action"]):
-                postprocessors.append(
-                    ProcessorSpec(
-                        type="denormalize",
-                        mode=mode,
-                        artifact="artifacts/stats.safetensors",
-                        features=feats,
-                    )
-                )
+    preprocessors, postprocessors = build_processor_specs(
+        policy,
+        include_normalization=include_normalization and bool(get_policy_stats(policy)),
+        stats_artifact="artifacts/stats.safetensors",
+    )
 
     save_policy_config(policy, assets_dir / "config.json")
     runner_block = {"type": runner_cls.type, **runner_cfg}
