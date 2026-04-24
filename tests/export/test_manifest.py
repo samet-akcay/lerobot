@@ -20,6 +20,7 @@ These tests run without any optional dependencies (no onnxruntime, openvino, etc
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import numpy as np
@@ -46,7 +47,10 @@ class TestManifestSchema:
         manifest = Manifest(
             policy=PolicyInfo(
                 name="act",
-                source=PolicySource(repo_id="lerobot/act_aloha"),
+                source=PolicySource(
+                    repo_id="lerobot/act_aloha",
+                    class_path="lerobot.policies.act.modeling_act.ACTPolicy",
+                ),
             ),
             model=ModelConfig(
                 n_obs_steps=1,
@@ -91,12 +95,14 @@ class TestManifestSchema:
         assert loaded.version == "1.0"
         assert loaded.policy.name == "act"
         assert loaded.policy.source.repo_id == "lerobot/act_aloha"
+        assert loaded.policy.source.class_path == "lerobot.policies.act.modeling_act.ACTPolicy"
         assert loaded.is_single_pass
         assert not loaded.is_iterative
         assert not loaded.is_kv_cache
         assert loaded.model.runner["type"] == "single_pass"
         assert loaded.model.runner["chunk_size"] == 100
         assert loaded.model.artifacts["model"] == "artifacts/model.onnx"
+        assert "backend" not in loaded.model.to_dict()
         assert len(loaded.model.preprocessors) == 1
         assert loaded.model.preprocessors[0].type == "normalize"
         assert loaded.model.preprocessors[0].mode == "mean_std"
@@ -265,6 +271,16 @@ class TestManifestSchema:
         assert m.is_iterative
         assert not m.is_single_pass
         assert not m.is_kv_cache
+
+    def test_converged_act_fixture_validates_unchanged(self):
+        from lerobot.export.manifest import Manifest
+
+        fixture_path = Path(__file__).parent / "fixtures" / "manifest_act_converged.json"
+        fixture = json.loads(fixture_path.read_text())
+
+        manifest = Manifest.from_dict(fixture)
+
+        assert manifest.to_dict() == fixture
 
 
 class TestNormalizer:
@@ -495,3 +511,22 @@ class TestNormalizer:
         observation = {"observation.state": np.array([[0.5]], dtype=np.float32)}
         with pytest.raises(ValueError, match="q01.*q99|quantile"):
             normalizer.normalize_inputs(observation)
+
+    def test_save_stats_safetensors_uses_slash_delimited_keys(self, tmp_path: Path):
+        from safetensors.numpy import load_file
+
+        from lerobot.export.normalize import save_stats_safetensors
+
+        stats = {
+            "observation.state": {
+                "mean": np.array([0.0, 1.0], dtype=np.float32),
+                "std": np.array([2.0, 3.0], dtype=np.float32),
+            }
+        }
+
+        stats_path = tmp_path / "stats.safetensors"
+        save_stats_safetensors(stats, stats_path)
+
+        raw = load_file(str(stats_path))
+
+        assert sorted(raw) == ["observation.state/mean", "observation.state/std"]

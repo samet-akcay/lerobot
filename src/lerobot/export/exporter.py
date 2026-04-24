@@ -97,6 +97,11 @@ def _is_pi05_policy(policy: PreTrainedPolicy) -> bool:
     )
 
 
+def _policy_class_path(policy: PreTrainedPolicy) -> str:
+    policy_cls = type(policy)
+    return f"{policy_cls.__module__}.{policy_cls.__qualname__}"
+
+
 def export_policy(
     policy: PreTrainedPolicy,
     output_dir: str | Path,
@@ -145,13 +150,13 @@ def export_policy(
             source=PolicySource(
                 repo_id=getattr(policy.config, "repo_id", None),
                 revision=getattr(policy.config, "revision", None),
+                class_path=_policy_class_path(policy),
             ),
         ),
         model=ModelConfig(
             n_obs_steps=getattr(policy.config, "n_obs_steps", 1),
             runner=runner_block,
             artifacts=artifacts,
-            backend=backend,
             preprocessors=preprocessors or None,
             postprocessors=postprocessors or None,
         ),

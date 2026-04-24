@@ -20,7 +20,7 @@ import json
 from types import SimpleNamespace
 
 from lerobot.export.exporter import build_processor_specs
-from lerobot.export.manifest import Manifest, ModelConfig, PolicyInfo, ProcessorSpec
+from lerobot.export.manifest import Manifest, ModelConfig, PolicyInfo, PolicySource, ProcessorSpec
 
 
 class _Feature:
@@ -116,7 +116,10 @@ def test_manifest_processor_specs_roundtrip_preserves_flat_custom_params(tmp_pat
     )
 
     manifest = Manifest(
-        policy=PolicyInfo(name="pi05"),
+        policy=PolicyInfo(
+            name="pi05",
+            source=PolicySource(class_path="lerobot.policies.pi05.modeling_pi05.PI05Policy"),
+        ),
         model=ModelConfig(
             n_obs_steps=1,
             runner={"type": "kv_cache"},
@@ -132,3 +135,4 @@ def test_manifest_processor_specs_roundtrip_preserves_flat_custom_params(tmp_pat
 
     assert [spec.to_dict() for spec in loaded.model.preprocessors] == [spec.to_dict() for spec in preprocessors]
     assert [spec.to_dict() for spec in loaded.model.postprocessors] == [spec.to_dict() for spec in postprocessors]
+    assert loaded.policy.source.class_path == "lerobot.policies.pi05.modeling_pi05.PI05Policy"

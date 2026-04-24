@@ -16,7 +16,7 @@
 """Manifest schema for the converged ``policy_package`` v1.0 format.
 
 The manifest is the contract between export and runtime.  It is pure JSON
-data — no code references, no framework-specific class paths.
+data.
 
 LeRobot uses the ``type`` + flat-params style for components (runners,
 preprocessors, postprocessors).
@@ -185,18 +185,11 @@ class ModelConfig:
     The ``runner`` field is an open-ended dict with a ``type`` key that
     determines the inference pattern.  Policy-specific parameters sit
     alongside ``type`` as flat keys.
-
-    The optional ``backend`` field records the backend name requested at
-    export time (e.g. ``"onnx"``, ``"openvino"``).  It disambiguates
-    packages that share an artifact extension — for example, both ONNX
-    and OpenVINO packages use ``.onnx`` artifacts, so a loader cannot
-    tell them apart from the filesystem alone.
     """
 
     n_obs_steps: int
     runner: dict[str, Any]
     artifacts: dict[str, str]
-    backend: str | None = None
     preprocessors: list[ProcessorSpec] | None = None
     postprocessors: list[ProcessorSpec] | None = None
 
@@ -206,8 +199,6 @@ class ModelConfig:
             "runner": self.runner,
             "artifacts": self.artifacts,
         }
-        if self.backend:
-            result["backend"] = self.backend
         if self.preprocessors:
             result["preprocessors"] = [p.to_dict() for p in self.preprocessors]
         if self.postprocessors:

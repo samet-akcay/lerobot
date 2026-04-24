@@ -272,7 +272,7 @@ def _load_stats(path: Path | str) -> dict[str, dict[str, NDArray[np.floating]]]:
     flat = load_file(str(path))
     stats: dict[str, dict[str, NDArray[np.floating]]] = {}
     for flat_key, tensor in flat.items():
-        feature_name, stat_name = flat_key.rsplit(".", 1)
+        feature_name, stat_name = flat_key.rsplit("/", 1)
         if feature_name not in stats:
             stats[feature_name] = {}
         stats[feature_name][stat_name] = tensor.astype(np.float32)
@@ -291,7 +291,7 @@ def save_stats_safetensors(
     flat: dict[str, NDArray[np.floating]] = {}
     for feature_name, feature_stats in stats.items():
         for stat_name, value in feature_stats.items():
-            flat_key = f"{feature_name}.{stat_name}"
+            flat_key = f"{feature_name}/{stat_name}"
             if isinstance(value, np.ndarray):
                 flat[flat_key] = value.astype(np.float32)
             else:
