@@ -44,7 +44,7 @@ class TestPI05Export:
         from transformers import AutoTokenizer
 
         policy, batch = create_pi05_policy_and_batch()
-        tokenizer = load_cached_paligemma_tokenizer()
+        load_cached_paligemma_tokenizer()
 
         package_path = policy.to_onnx(tmp_path / "pi05_package", example_batch=batch)
 
@@ -157,6 +157,78 @@ class TestPI05Export:
             rtol=1e-1,
             atol=1e-1,
             msg="PI05 ONNX Runtime output does not match PyTorch output",
+        )
+
+    @pytest.mark.slow
+    def test_pi05_stagewise_onnx_parity_locks_in_known_good_accuracy(self, tmp_path: Path):
+        """
+        Stage-wise ONNX accuracy is excellent (encoder ~3e-6, denoise ~9e-7).
+        End-to-end parity is loose (1e-1) due to compounding in the chained
+        Euler loop with unidentified root cause. This test pins the GOOD part:
+        a future contributor who breaks stage-wise accuracy will fail here
+        even if the loose e2e tolerance still passes.
+        """
+        from lerobot.export.backends import BACKENDS
+
+        policy, batch = create_pi05_policy_and_batch()
+        load_cached_paligemma_tokenizer()
+
+        package_path = policy.to_onnx(
+            tmp_path / "pi05_package",
+            example_batch=batch,
+            include_normalization=False,
+        )
+        manifest = _read_manifest(package_path)
+        session = BACKENDS["onnx"].open(package_path / "artifacts", manifest, device="cpu")
+
+        modules = policy.get_export_modules()
+        encoder_inputs = policy.prepare_inputs(batch)["encoder"]
+
+        with torch.no_grad():
+            eager_encoder_outputs = modules["encoder"](*encoder_inputs.tensors)
+
+        encoder_outputs = session.run(
+            "encoder",
+            {
+                name: tensor.detach().cpu().numpy()
+                for name, tensor in zip(encoder_inputs.input_names, encoder_inputs.tensors, strict=True)
+            },
+        )
+        expected_encoder_outputs = {
+            name: tensor.detach().cpu().numpy()
+            for name, tensor in zip(encoder_inputs.output_names, eager_encoder_outputs, strict=True)
+        }
+        for output_name, expected in expected_encoder_outputs.items():
+            assert_numerical_parity(
+                encoder_outputs[output_name],
+                expected,
+                rtol=1e-4,
+                atol=1e-4,
+                msg=f"PI05 encoder ONNX output '{output_name}' regressed",
+            )
+
+        prefix_len = eager_encoder_outputs[0].shape[1]
+        denoise_inputs = policy.prepare_runtime_inputs(
+            "denoise",
+            {"prefix_len": prefix_len, "device": next(policy.parameters()).device},
+        )
+
+        with torch.no_grad():
+            eager_denoise_output = modules["denoise"](*denoise_inputs.tensors)
+
+        denoise_outputs = session.run(
+            "denoise",
+            {
+                name: tensor.detach().cpu().numpy()
+                for name, tensor in zip(denoise_inputs.input_names, denoise_inputs.tensors, strict=True)
+            },
+        )
+        assert_numerical_parity(
+            denoise_outputs["v_t"],
+            eager_denoise_output.detach().cpu().numpy(),
+            rtol=1e-4,
+            atol=1e-4,
+            msg="PI05 denoise ONNX output regressed",
         )
 
     @pytest.mark.slow

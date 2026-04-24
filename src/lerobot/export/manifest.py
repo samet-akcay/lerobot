@@ -339,10 +339,6 @@ class Manifest:
         return self.model.runner.get("type", "action_chunking")
 
     @property
-    def is_single_pass(self) -> bool:
-        return self.runner_type == "single_pass"
-
-    @property
     def is_iterative(self) -> bool:
         return self.runner_type == "iterative"
 

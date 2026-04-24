@@ -15,14 +15,15 @@ LeRobot Policy
     │
     ▼
 Exporter
-    ├── Backend serializer/runtime adapter (ONNX, OpenVINO)
-    ├── Runner config (action_chunking, kv_cache)
-    ├── ProcessorSpec arrays (preprocess, postprocess)
-    ├── Manifest.json
-    └── Artifacts/
-        ├── weights (model.onnx / encoder.onnx + denoise.onnx)
-        ├── stats.safetensors
-        └── tokenizer/
+    ├── ONNX serializer
+    ├── Manifest writer
+    └── Package assets
+        ├── manifest.json
+        ├── artifacts/model.onnx          (ACT)
+        ├── artifacts/encoder.onnx        (PI05)
+        ├── artifacts/denoise.onnx        (PI05)
+        ├── stats.safetensors             (optional)
+        └── tokenizer/                    (PI05)
 ```
 
 At a high level the exporter turns a PyTorch policy into:
@@ -32,15 +33,15 @@ At a high level the exporter turns a PyTorch policy into:
 - a manifest that describes how to run the package,
 - supporting assets such as stats and tokenizer files.
 
-The manifest envelope captures the converged package contract, including:
+Using `tests/export/fixtures/manifest_act_converged.json` as ground truth, the
+manifest written by this carve-out contains:
 
-- `policy.source.class_path`
-- `runner.type`
-- `runner.stages[]`
-- `processors.preprocess[]`
-- `processors.postprocess[]`
-- `model.inputs/outputs`
-- `artifacts[]`
+- `policy.source.class_path` for the canonical LeRobot policy entry point
+- `model.runner` as an object with `type` plus runner-specific flat params
+- `model.preprocessors` as an array of `ProcessorSpec`
+- `model.postprocessors` as an array of `ProcessorSpec`
+- `model.artifacts` as a mapping from artifact role to relative path
+- `model.n_obs_steps`, plus optional `hardware` and `metadata`
 
 Processors are folded into ProcessorSpec arrays only. There is no sidecar JSON, no `RuntimeRegistry`, and no standalone `ProcessorPipeline` class in the export package.
 
@@ -51,8 +52,8 @@ This carve-out currently supports two runner families:
 
 The supported runtime backends are:
 
-- ONNX Runtime
-- OpenVINO
+- ONNX Runtime for direct execution of exported ONNX artifacts
+- OpenVINO as a runtime-only loader over the same ONNX artifacts
 
 ## Why ACT + PI05 first
 
@@ -106,5 +107,3 @@ This LeRobot PR can land independently because the companion change is documenta
 1. Should the manifest stay under `lerobot.export`, or move to a top-level `lerobot.manifest` package once more policies opt in?
 2. Should LeRobot publish the manifest as a machine-readable JSON Schema alongside the Python dataclasses?
 3. Should this RFC be mirrored into the public documentation site, or remain repository-local design documentation?
-4. PI05 parity is currently `1e-1` due to an unidentified compounding mechanism in the chained Euler loop. Should PI05 stay in the initial PR, or be carved out until parity tightens?
-5. Should ONNX and OpenVINO remain the default export path, or be gated more aggressively behind extras?

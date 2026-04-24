@@ -30,7 +30,7 @@ import pytest
 class TestManifestSchema:
     """Tests for the Manifest dataclass and serialization."""
 
-    def test_single_pass_roundtrip(self, tmp_path: Path):
+    def test_action_chunking_roundtrip(self, tmp_path: Path):
         from lerobot.export.manifest import (
             CameraConfig,
             HardwareConfig,
@@ -96,7 +96,6 @@ class TestManifestSchema:
         assert loaded.policy.name == "act"
         assert loaded.policy.source.repo_id == "lerobot/act_aloha"
         assert loaded.policy.source.class_path == "lerobot.policies.act.modeling_act.ACTPolicy"
-        assert not loaded.is_single_pass
         assert not loaded.is_iterative
         assert not loaded.is_kv_cache
         assert loaded.runner_type == "action_chunking"
@@ -270,7 +269,8 @@ class TestManifestSchema:
         )
 
         assert m.runner_type == "action_chunking"
-        assert not m.is_single_pass
+        assert not m.is_iterative
+        assert not m.is_kv_cache
 
     def test_runner_type_property(self):
         from lerobot.export.manifest import Manifest, ModelConfig, PolicyInfo
@@ -285,7 +285,6 @@ class TestManifestSchema:
         )
         assert m.runner_type == "iterative"
         assert m.is_iterative
-        assert not m.is_single_pass
         assert not m.is_kv_cache
 
     def test_converged_act_fixture_validates_unchanged(self):

@@ -15,11 +15,13 @@
 # limitations under the License.
 """Export configuration dataclasses authored by policies and consumed by runners.
 
-Each runner family has a matching config dataclass:
+Each supported runner family has a matching config dataclass:
 
 - :class:`SinglePassExportConfig` -> :class:`~lerobot.export.runners.single_pass.SinglePassRunner`
-- :class:`IterativeExportConfig`  -> :class:`~lerobot.export.runners.iterative.IterativeRunner`
 - :class:`KVCacheExportConfig`    -> :class:`~lerobot.export.runners.kv_cache.KVCacheRunner`
+
+The iterative config remains as an internal compatibility type for deferred
+Diffusion follow-up work; this carve-out does not ship an iterative runner.
 """
 
 from __future__ import annotations

@@ -135,6 +135,21 @@ class DiffusionPolicy(PreTrainedPolicy):
     # Export protocol: Exportable
     # ------------------------------------------------------------------
 
+    def export(
+        self,
+        output_dir,
+        *,
+        backend: str = "onnx",
+        example_batch: dict[str, Tensor] | None = None,
+        opset_version: int = 17,
+        include_normalization: bool = True,
+    ):
+        # Diffusion is intentionally outside this export carve-out until an
+        # iterative runner replacement lands in a follow-up PR.
+        raise NotImplementedError(
+            "Diffusion export is not part of this carve-out; deferred to follow-up PR"
+        )
+
     def get_inference_type(self) -> str:
         return "iterative"
 
