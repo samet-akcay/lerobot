@@ -26,7 +26,7 @@ Example::
 
     from lerobot.export import load_exported_policy
 
-    policy = load_exported_policy("pi0_package", backend="onnx")
+    policy = load_exported_policy("pi05_package", backend="onnx")
     actions = policy.predict_action_chunk(observation, num_steps=10)
 """
 
@@ -60,6 +60,7 @@ class KVCacheRunner:
         runner_cfg = manifest["model"]["runner"]
         self._num_steps: int = runner_cfg.get("num_inference_steps", 10)
         self._action_dim: int = runner_cfg["action_dim"]
+        self._output_action_dim: int = runner_cfg.get("output_action_dim", self._action_dim)
         self._chunk_size: int = runner_cfg.get("chunk_size", 50)
         self._state_dim: int | None = runner_cfg.get("state_dim")
         self._input_mapping: dict[str, str] = runner_cfg.get("input_mapping", {})
@@ -117,8 +118,9 @@ class KVCacheRunner:
             "num_inference_steps": export_config.num_steps,
             "scheduler": "euler",
             "action_dim": export_config.action_dim,
+            "output_action_dim": policy_obj.config.output_features["action"].shape[0],
             "chunk_size": export_config.chunk_size,
-            "n_action_steps": export_config.chunk_size,
+            "n_action_steps": policy_obj.config.n_action_steps,
             "num_layers": export_config.num_layers,
             "num_kv_heads": export_config.num_kv_heads,
             "head_dim": export_config.head_dim,
@@ -217,6 +219,9 @@ class KVCacheRunner:
             x_t = x_t + dt * v_t
 
         action = self._normalizer.denormalize_outputs(x_t, key="action") if self._normalizer else x_t
+
+        if action.shape[-1] > self._output_action_dim:
+            action = action[..., : self._output_action_dim]
 
         if action.ndim == 3 and action.shape[0] == 1:
             action = action[0]

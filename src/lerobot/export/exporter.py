@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 import logging
+import shutil
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -56,6 +57,7 @@ def build_processor_specs(
     *,
     include_normalization: bool,
     stats_artifact: str,
+    tokenizer_artifact: str | None = None,
 ) -> tuple[list[ProcessorSpec], list[ProcessorSpec]]:
     preprocessors: list[ProcessorSpec] = []
     postprocessors: list[ProcessorSpec] = []
@@ -63,7 +65,10 @@ def build_processor_specs(
     pi05_postprocessors: list[dict[str, object]] = []
 
     if _is_pi05_policy(policy):
-        pi05_preprocessors, pi05_postprocessors = emit_pi05_processor_specs(policy.config)
+        pi05_preprocessors, pi05_postprocessors = emit_pi05_processor_specs(
+            policy.config,
+            tokenizer_artifact=tokenizer_artifact,
+        )
         preprocessors.extend(ProcessorSpec.from_dict(spec) for spec in pi05_preprocessors[:1])
 
     if include_normalization:
@@ -102,6 +107,41 @@ def _policy_class_path(policy: PreTrainedPolicy) -> str:
     return f"{policy_cls.__module__}.{policy_cls.__qualname__}"
 
 
+def _bundle_pi05_tokenizer(policy: PreTrainedPolicy, output_dir: Path) -> str | None:
+    if not _is_pi05_policy(policy):
+        return None
+
+    try:
+        from transformers import AutoTokenizer
+    except ImportError as e:
+        raise ImportError("transformers is required to bundle PI05 tokenizer assets") from e
+
+    tokenizer_dir = output_dir / "tokenizer"
+    tokenizer_dir.mkdir(exist_ok=True)
+
+    tokenizer = AutoTokenizer.from_pretrained("google/paligemma-3b-pt-224", add_eos_token=True, add_bos_token=False)
+    tokenizer.save_pretrained(tokenizer_dir)
+
+    chat_template = getattr(tokenizer, "chat_template", None)
+    if chat_template is not None:
+        chat_template_path = tokenizer_dir / "chat_template.jinja"
+        if not chat_template_path.exists():
+            chat_template_path.write_text(chat_template, encoding="utf-8")
+
+    for extra_name in ["special_tokens_map.json", "tokenizer.json", "tokenizer_config.json"]:
+        extra_path = tokenizer_dir / extra_name
+        if extra_path.exists():
+            continue
+        source = getattr(tokenizer, "name_or_path", None)
+        if source is None:
+            continue
+        source_path = Path(source) / extra_name
+        if source_path.exists():
+            shutil.copy2(source_path, extra_path)
+
+    return "tokenizer"
+
+
 def export_policy(
     policy: PreTrainedPolicy,
     output_dir: str | Path,
@@ -130,6 +170,7 @@ def export_policy(
     if backend_impl.runtime_only:
         raise ValueError(f"Backend {serialization_backend!r} is runtime-only and cannot serialize a model.")
     artifacts = backend_impl.serialize(modules, artifacts_dir, opset_version=opset_version)
+    tokenizer_artifact = _bundle_pi05_tokenizer(policy, output_dir)
 
     if include_normalization:
         stats = get_policy_stats(policy)
@@ -140,6 +181,7 @@ def export_policy(
         policy,
         include_normalization=include_normalization and bool(get_policy_stats(policy)),
         stats_artifact="stats.safetensors",
+        tokenizer_artifact=tokenizer_artifact,
     )
 
     save_policy_config(policy, assets_dir / "config.json")

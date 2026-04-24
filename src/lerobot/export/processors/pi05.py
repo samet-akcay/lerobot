@@ -33,16 +33,20 @@ class TokenizeProcessorEmitter:
     padding_side: str
     padding: str
     truncation: bool = True
+    artifact: str | None = None
 
     def to_processor_spec(self) -> dict[str, object]:
-        return {
-            "type": "tokenize",
-            "tokenizer_name": self.tokenizer_name,
-            "max_length": self.max_length,
-            "padding_side": self.padding_side,
-            "padding": self.padding,
-            "truncation": self.truncation,
-        }
+        return _drop_none_values(
+            {
+                "type": "tokenize",
+                "tokenizer_name": self.tokenizer_name,
+                "max_length": self.max_length,
+                "padding_side": self.padding_side,
+                "padding": self.padding,
+                "truncation": self.truncation,
+                "artifact": self.artifact,
+            }
+        )
 
 
 @dataclass(frozen=True)
@@ -84,7 +88,11 @@ class Pi05PrepareStateProcessorEmitter:
         }
 
 
-def emit_pi05_processor_specs(config: Any) -> tuple[list[dict[str, object]], list[dict[str, object]]]:
+def emit_pi05_processor_specs(
+    config: Any,
+    *,
+    tokenizer_artifact: str | None = None,
+) -> tuple[list[dict[str, object]], list[dict[str, object]]]:
     preprocessors = [
         RelativeActionsProcessorEmitter(
             enabled=getattr(config, "use_relative_actions", False),
@@ -97,6 +105,7 @@ def emit_pi05_processor_specs(config: Any) -> tuple[list[dict[str, object]], lis
             max_length=config.tokenizer_max_length,
             padding_side="right",
             padding="max_length",
+            artifact=tokenizer_artifact,
         ).to_processor_spec(),
     ]
     postprocessors = [

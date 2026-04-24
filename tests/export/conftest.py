@@ -212,3 +212,18 @@ def create_pi05_policy_and_batch(device: str = "cuda"):
     }
 
     return policy, batch
+
+
+def load_cached_paligemma_tokenizer():
+    """Load the PI05 tokenizer from local Hugging Face cache or skip.
+
+    Export tests use a real tokenizer roundtrip but must stay CI-portable when
+    the cache is not pre-populated.
+    """
+    pytest.importorskip("transformers")
+    from transformers import AutoTokenizer
+
+    try:
+        return AutoTokenizer.from_pretrained("google/paligemma-3b-pt-224", local_files_only=True)
+    except OSError:
+        pytest.skip("paligemma tokenizer not in local HF cache; skipping for CI portability")
