@@ -134,7 +134,7 @@ def export_policy(
     if include_normalization:
         stats = get_policy_stats(policy)
         if stats:
-            stats_path = artifacts_dir / "stats.safetensors"
+            stats_path = output_dir / "stats.safetensors"
             save_stats_safetensors(stats, stats_path)
     preprocessors, postprocessors = build_processor_specs(
         policy,

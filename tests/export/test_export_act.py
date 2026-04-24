@@ -41,7 +41,7 @@ def _read_manifest(package_path: Path) -> dict[str, Any]:
 
 class TestACTExport:
     @pytest.mark.slow
-    def test_export_creates_valid_package(self, tmp_path: Path):
+    def test_export_creates_valid_package_manifest_runner_type_class_path(self, tmp_path: Path):
         policy, batch = create_act_policy_and_batch()
 
         package_path = policy.export(
@@ -52,6 +52,11 @@ class TestACTExport:
 
         assert (package_path / "manifest.json").exists()
         assert (package_path / "artifacts" / "model.onnx").exists()
+
+        manifest = _read_manifest(package_path)
+        assert manifest["model"]["runner"]["type"] == "action_chunking"
+        assert manifest["policy"]["source"]["class_path"] == "lerobot.policies.act.modeling_act.ACTPolicy"
+        assert "backend" not in manifest["model"]
 
     @pytest.mark.slow
     def test_onnx_forward_pass(self, tmp_path: Path):
@@ -102,8 +107,8 @@ class TestACTExport:
         assert_numerical_parity(
             onnx_output,
             pytorch_np,
-            rtol=1e-4,
-            atol=1e-4,
+            rtol=1e-5,
+            atol=1e-5,
             msg="ACT ONNX output does not match PyTorch output",
         )
 
@@ -146,11 +151,16 @@ class TestACTExport:
         manifest = _read_manifest(package_path)
         preprocessors = manifest["model"]["preprocessors"] or []
         postprocessors = manifest["model"]["postprocessors"] or []
+        assert manifest["model"]["runner"]["type"] == "action_chunking"
+        assert manifest["policy"]["source"]["class_path"] == "lerobot.policies.act.modeling_act.ACTPolicy"
+        assert "backend" not in manifest["model"]
+        assert [processor["type"] for processor in preprocessors] == ["normalize"]
+        assert [processor["type"] for processor in postprocessors] == ["denormalize"]
         assert preprocessors, "Expected manifest to declare normalize preprocessors when stats are present"
         assert postprocessors, (
             "Expected manifest to declare denormalize postprocessors when stats are present"
         )
-        assert (package_path / "artifacts" / "stats.safetensors").exists()
+        assert (package_path / "stats.safetensors").exists()
 
         runtime = load_exported_policy(package_path, backend="onnx", device="cpu")
         obs_numpy = to_numpy(batch)
@@ -163,8 +173,8 @@ class TestACTExport:
         assert_numerical_parity(
             onnx_output,
             pytorch_np,
-            rtol=1e-4,
-            atol=1e-4,
+            rtol=1e-5,
+            atol=1e-5,
             msg="ACT ONNX output (with runtime normalization) does not match PyTorch normalize→model→denormalize",
         )
 

@@ -13,11 +13,12 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Single-pass runner: one forward pass produces a full action chunk.
+"""Action-chunking runner backed by a single forward pass.
 
 Used by feedforward chunk-emitting policies such as ACT. The policy exposes a
 single ``"model"`` stage and emits a contiguous ``[chunk_size, action_dim]``
-action tensor per call.
+action tensor per call while exporting the converged manifest type
+``"action_chunking"``.
 
 Example::
 

@@ -75,6 +75,18 @@ def test_act_normalization_specs_validate_and_roundtrip() -> None:
 
     assert [spec.type for spec in preprocessors] == ["normalize"]
     assert [spec.type for spec in postprocessors] == ["denormalize"]
+    assert preprocessors[0].to_dict() == {
+        "type": "normalize",
+        "mode": "mean_std",
+        "artifact": "stats.safetensors",
+        "features": ["observation.state"],
+    }
+    assert postprocessors[0].to_dict() == {
+        "type": "denormalize",
+        "mode": "mean_std",
+        "artifact": "stats.safetensors",
+        "features": ["action"],
+    }
 
     for spec in [*preprocessors, *postprocessors]:
         _assert_roundtrip(spec)
