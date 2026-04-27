@@ -52,7 +52,7 @@ def test_select_runner_raises_for_unrecognized_policy() -> None:
 
 
 def test_runtime_registry_lookup_returns_concrete_classes() -> None:
-    assert next(r for r in RUNNERS if r.type == "action_chunking") is SinglePassRunner
+    assert next(r for r in RUNNERS if r.type == "single_pass") is SinglePassRunner
     assert next(r for r in RUNNERS if r.type == "kv_cache") is KVCacheRunner
 
 

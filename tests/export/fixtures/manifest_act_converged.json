@@ -11,7 +11,7 @@
   "model": {
     "n_obs_steps": 1,
     "runner": {
-      "type": "action_chunking",
+      "type": "single_pass",
       "chunk_size": 100,
       "n_action_steps": 100
     },
