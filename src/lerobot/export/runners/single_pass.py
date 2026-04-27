@@ -34,7 +34,7 @@ from typing import TYPE_CHECKING, Any, ClassVar
 
 import numpy as np
 
-from ..interfaces import RuntimeAdapter
+from ..interfaces import _RuntimeSession
 from ..protocols import Exportable, is_exportable
 from .base import ExportModule, build_dynamic_axes, build_normalizer, get_output_by_names, register_runner
 
@@ -61,16 +61,16 @@ class SinglePassRunner:
     type: ClassVar[str] = "single_pass"
     inference_type: ClassVar[str] = "single_pass"
 
-    def __init__(self, manifest: dict[str, Any], artifacts_dir: Path, runtime_adapter: RuntimeAdapter):
+    def __init__(self, manifest: dict[str, Any], artifacts_dir: Path, runtime_session: _RuntimeSession):
         """Initialise from a loaded manifest and backend session.
 
         Args:
             manifest: Parsed manifest dict.
             artifacts_dir: Directory containing the artifact files.
-            runtime_adapter: Open runtime adapter for inference.
+            runtime_session: Open runtime session for inference.
         """
         self._manifest = manifest
-        self._runtime_adapter = runtime_adapter
+        self._runtime_session = runtime_session
         self._normalizer = build_normalizer(manifest, artifacts_dir.parent)
 
     @classmethod
@@ -126,19 +126,19 @@ class SinglePassRunner:
         cls,
         manifest: dict[str, Any],
         artifacts_dir: Path,
-        runtime_adapter: RuntimeAdapter,
+        runtime_session: _RuntimeSession,
     ) -> SinglePassRunner:
         """Instantiate from a loaded manifest and backend session.
 
         Args:
             manifest: Parsed manifest dict.
             artifacts_dir: Directory containing the artifact files.
-            runtime_adapter: Open runtime adapter for inference.
+            runtime_session: Open runtime session for inference.
 
         Returns:
             A ready-to-use :class:`SinglePassRunner`.
         """
-        return cls(manifest, artifacts_dir, runtime_adapter)
+        return cls(manifest, artifacts_dir, runtime_session)
 
     def run(self, batch: dict[str, np.ndarray]) -> np.ndarray:
         """Run a single forward pass and return the action chunk.
@@ -156,7 +156,7 @@ class SinglePassRunner:
         obs = self._normalizer.normalize_inputs(batch) if self._normalizer else batch
         obs = {k: v.astype(np.float32) for k, v in obs.items()}
 
-        outputs = self._runtime_adapter.run("model", obs)
+        outputs = self._runtime_session.run("model", obs)
 
         action = get_output_by_names(
             outputs,

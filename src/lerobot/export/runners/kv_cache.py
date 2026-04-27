@@ -37,7 +37,7 @@ from typing import TYPE_CHECKING, Any, ClassVar
 import numpy as np
 import torch
 
-from ..interfaces import RuntimeAdapter
+from ..interfaces import _RuntimeSession
 from ..protocols import is_exportable
 from .base import ExportModule, build_dynamic_axes, build_normalizer, get_output_by_names, register_runner
 from .single_pass import DEFAULT_ACTION_CHUNK_SIZE, policy_as_exportable
@@ -65,17 +65,17 @@ class KVCacheRunner:
 
     type: ClassVar[str] = "kv_cache"
 
-    def __init__(self, manifest: dict[str, Any], artifacts_dir: Path, runtime_adapter: RuntimeAdapter):
+    def __init__(self, manifest: dict[str, Any], artifacts_dir: Path, runtime_session: _RuntimeSession):
         """Initialise from a loaded manifest and backend session.
 
         Args:
             manifest: Parsed manifest dict.
             artifacts_dir: Directory containing the artifact files.
-            runtime_adapter: Open runtime adapter exposing ``"encoder"`` and
+            runtime_session: Open runtime session exposing ``"encoder"`` and
                 ``"denoise"`` stages.
         """
         self._manifest = manifest
-        self._runtime_adapter = runtime_adapter
+        self._runtime_session = runtime_session
         self._normalizer = build_normalizer(manifest, artifacts_dir.parent)
 
         runner_cfg = manifest["model"]["runner"]
@@ -179,20 +179,20 @@ class KVCacheRunner:
         cls,
         manifest: dict[str, Any],
         artifacts_dir: Path,
-        runtime_adapter: RuntimeAdapter,
+        runtime_session: _RuntimeSession,
     ) -> KVCacheRunner:
         """Instantiate from a loaded manifest and backend session.
 
         Args:
             manifest: Parsed manifest dict.
             artifacts_dir: Directory containing the artifact files.
-            runtime_adapter: Open runtime adapter exposing ``"encoder"`` and
+            runtime_session: Open runtime session exposing ``"encoder"`` and
                 ``"denoise"`` stages.
 
         Returns:
             A ready-to-use :class:`KVCacheRunner`.
         """
-        return cls(manifest, artifacts_dir, runtime_adapter)
+        return cls(manifest, artifacts_dir, runtime_session)
 
     def run(
         self,
@@ -249,7 +249,7 @@ class KVCacheRunner:
                 padding = np.zeros((*state.shape[:-1], self._state_dim - current_dim), dtype=state.dtype)
                 obs["state"] = np.concatenate([state, padding], axis=-1)
 
-        encoder_outputs = self._runtime_adapter.run("encoder", obs)
+        encoder_outputs = self._runtime_session.run("encoder", obs)
 
         prefix_pad_mask = encoder_outputs.get("prefix_pad_mask")
         if prefix_pad_mask is None:
@@ -281,7 +281,7 @@ class KVCacheRunner:
             if "state" in obs:
                 denoise_inputs["state"] = obs["state"]
 
-            outputs = self._runtime_adapter.run("denoise", denoise_inputs)
+            outputs = self._runtime_session.run("denoise", denoise_inputs)
 
             v_t = get_output_by_names(
                 outputs,

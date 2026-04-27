@@ -14,17 +14,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Public runtime-neutral protocols for the export subsystem.
+"""Public and internal protocols for the export subsystem.
 
-This module is the canonical home for the ``Backend`` and ``RuntimeAdapter``
-protocols. Both ``backends`` and ``runners`` packages import from here so
-neither needs to depend on the other; this is the boundary that keeps the
-two halves of the export subsystem decoupled regardless of artifact format
-or runtime engine.
+This module is the canonical home for the public ``Backend`` protocol and the
+internal ``_RuntimeSession`` protocol. Both ``backends`` and ``runners``
+packages import from here so neither needs to depend on the other; this is the
+boundary that keeps the two halves of the export subsystem decoupled regardless
+of artifact format or runtime engine.
 
-External consumers should import from this module:
-
-    from lerobot.export.interfaces import Backend, RuntimeAdapter
+External consumers should import only ``Backend`` from this module.
 """
 
 from __future__ import annotations
@@ -38,12 +36,12 @@ if TYPE_CHECKING:
 
     from .runners.base import ExportModule
 
-__all__ = ["Backend", "RuntimeAdapter"]
+__all__ = ["Backend"]
 
 
 @runtime_checkable
-class RuntimeAdapter(Protocol):
-    """Protocol for a live inference session opened by a :class:`Backend`.
+class _RuntimeSession(Protocol):
+    """Internal protocol for a live inference session opened by a :class:`Backend`.
 
     A runtime adapter wraps one or more loaded model stages and exposes a single
     :meth:`run` method that accepts named numpy inputs and returns named
@@ -73,7 +71,7 @@ class Backend(Protocol):
     1. **Serialisation** — tracing a list of :class:`ExportModule` specs and
        writing artifact files to disk (e.g. ``.onnx`` files).
     2. **Opening** — loading those artifacts at runtime and returning a
-       :class:`RuntimeAdapter` ready for inference.
+       :class:`_RuntimeSession` ready for inference.
 
     Concrete implementations register themselves via
     :func:`~lerobot.export.backends.base.register_backend`.
@@ -109,7 +107,7 @@ class Backend(Protocol):
         manifest: dict[str, Any],
         *,
         device: str = "cpu",
-    ) -> RuntimeAdapter:
+    ) -> _RuntimeSession:
         """Load artifact files and return a ready-to-use session.
 
         Args:
@@ -118,6 +116,6 @@ class Backend(Protocol):
             device: Target device string (e.g. ``"cpu"``, ``"cuda:0"``).
 
         Returns:
-            A :class:`RuntimeAdapter` ready for inference.
+            A :class:`_RuntimeSession` ready for inference.
         """
         ...

@@ -26,7 +26,7 @@ import torch
 from .base import register_backend, resolve_artifact_paths
 
 if TYPE_CHECKING:
-    from ..interfaces import RuntimeAdapter
+    from ..interfaces import _RuntimeSession
     from ..runners.base import ExportModule
 
 __all__ = ["ONNXBackend", "ONNXRuntimeAdapter"]
@@ -168,7 +168,7 @@ class ONNXBackend:
         manifest: dict[str, Any],
         *,
         device: str = "cpu",
-    ) -> RuntimeAdapter:
+    ) -> _RuntimeSession:
         """Load ``.onnx`` artifacts and return a ready-to-use session.
 
         Args:

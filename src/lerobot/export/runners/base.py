@@ -18,7 +18,7 @@
 A :class:`Runner` is the export-time and runtime translator for one inference
 pattern (single-pass or KV-cache in this carve-out). At export it consumes a
 policy and produces ``ExportModule`` specs the backend will trace; at runtime
-it loads artifacts via a :class:`~lerobot.export.interfaces.RuntimeAdapter` and
+it loads artifacts via a :class:`~lerobot.export.interfaces._RuntimeSession` and
 turns observations into action chunks.
 
 Concrete runners live alongside this module and self-register via
@@ -50,7 +50,7 @@ from typing import TYPE_CHECKING, Any, ClassVar, Protocol, runtime_checkable
 import numpy as np
 from torch import Tensor, nn
 
-from ..interfaces import RuntimeAdapter
+from ..interfaces import _RuntimeSession
 from ..manifest import ProcessorSpec
 from ..normalize import Normalizer
 
@@ -79,7 +79,7 @@ class ExportModule:
 
     Attributes:
         name: Stage identifier used as the artifact filename stem and as the
-            key passed to :meth:`~lerobot.export.interfaces.RuntimeAdapter.run`.
+            key passed to :meth:`~lerobot.export.interfaces._RuntimeSession.run`.
         wrapper: The ``nn.Module`` to trace.
         example_inputs: Tuple of example tensors used for tracing.
         input_names: Ordered list of input tensor names.
@@ -105,7 +105,7 @@ class Runner(Protocol):
 
     A runner translates between the export framework and a specific inference
     pattern.  At export time it produces :class:`ExportModule` specs; at
-    runtime it wraps a :class:`~lerobot.export.interfaces.RuntimeAdapter` and
+    runtime it wraps a :class:`~lerobot.export.interfaces._RuntimeSession` and
     turns observation dicts into action arrays.
 
     Concrete runners self-register via :func:`register_runner` and are
@@ -151,14 +151,14 @@ class Runner(Protocol):
         cls,
         manifest: dict[str, Any],
         artifacts_dir: Path,
-        runtime_adapter: RuntimeAdapter,
+        runtime_session: _RuntimeSession,
     ) -> Runner:
         """Instantiate a runner from a loaded manifest and backend session.
 
         Args:
             manifest: Parsed manifest dict.
             artifacts_dir: Directory containing the artifact files.
-            runtime_adapter: Open runtime adapter for inference.
+            runtime_session: Open runtime session for inference.
 
         Returns:
             A ready-to-use :class:`Runner` instance.

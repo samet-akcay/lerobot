@@ -24,7 +24,7 @@ import numpy as np
 from .base import register_backend, resolve_artifact_paths
 
 if TYPE_CHECKING:
-    from ..interfaces import RuntimeAdapter
+    from ..interfaces import _RuntimeSession
     from ..runners.base import ExportModule
 
 __all__ = ["OpenVINOBackend", "OpenVINORuntimeAdapter"]
@@ -146,7 +146,7 @@ class OpenVINOBackend:
         manifest: dict[str, Any],
         *,
         device: str = "cpu",
-    ) -> RuntimeAdapter:
+    ) -> _RuntimeSession:
         """Load ONNX artifacts via the OpenVINO runtime and return a session.
 
         Reads each ``.onnx`` artifact, compiles it with ``openvino.Core``,

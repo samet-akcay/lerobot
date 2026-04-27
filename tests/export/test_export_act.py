@@ -203,7 +203,7 @@ class TestACTBackends:
     def test_onnx_backend_initialization(self, tmp_path: Path):
         from lerobot.export import export_policy
         from lerobot.export.backends import BACKENDS
-        from lerobot.export.interfaces import RuntimeAdapter
+        from lerobot.export.backends.onnx import ONNXRuntimeAdapter
 
         policy, batch = create_act_policy_and_batch()
 
@@ -216,7 +216,7 @@ class TestACTBackends:
 
         manifest = _read_manifest(package_path)
         session = BACKENDS["onnx"].open(package_path / "artifacts", manifest, device="cpu")
-        assert isinstance(session, RuntimeAdapter)
+        assert isinstance(session, ONNXRuntimeAdapter)
 
         outputs = session.run("model", to_numpy(batch))
         assert outputs
@@ -226,7 +226,7 @@ class TestACTBackends:
         pytest.importorskip("openvino")
         from lerobot.export import export_policy
         from lerobot.export.backends import BACKENDS
-        from lerobot.export.interfaces import RuntimeAdapter
+        from lerobot.export.backends.openvino import OpenVINORuntimeAdapter
 
         policy, batch = create_act_policy_and_batch()
 
@@ -239,7 +239,7 @@ class TestACTBackends:
 
         manifest = _read_manifest(package_path)
         session = BACKENDS["openvino"].open(package_path / "artifacts", manifest, device="cpu")
-        assert isinstance(session, RuntimeAdapter)
+        assert isinstance(session, OpenVINORuntimeAdapter)
 
         outputs = session.run("model", to_numpy(batch))
         assert outputs

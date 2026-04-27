@@ -79,7 +79,7 @@ def test_toy_runner_and_backend_work_without_core_edits(tmp_path: Path, restore_
             self.model = AddOne().eval()
             self.config.stats = None
 
-    class ToyRuntimeAdapter:
+    class ToyRuntimeSession:
         def __init__(
             self, modules: dict[str, torch.jit.ScriptModule], io_specs: dict[str, dict[str, list[str]]]
         ):
@@ -122,7 +122,7 @@ def test_toy_runner_and_backend_work_without_core_edits(tmp_path: Path, restore_
 
         def open(
             self, artifacts_dir: Path, manifest: dict[str, Any], *, device: str = "cpu"
-        ) -> ToyRuntimeAdapter:
+        ) -> ToyRuntimeSession:
             del device
             modules = {}
             io_specs = {}
@@ -130,14 +130,14 @@ def test_toy_runner_and_backend_work_without_core_edits(tmp_path: Path, restore_
                 model_path = artifacts_dir / Path(relative_path).name
                 modules[name] = torch.jit.load(str(model_path))
                 io_specs[name] = json.loads((artifacts_dir / f"{name}_io.json").read_text())
-            return ToyRuntimeAdapter(modules, io_specs)
+            return ToyRuntimeSession(modules, io_specs)
 
     @register_runner
     class ToyRunner:
         type = "toy_runner"
 
-        def __init__(self, runtime_adapter: ToyRuntimeAdapter):
-            self._runtime_adapter = runtime_adapter
+        def __init__(self, runtime_session: ToyRuntimeSession):
+            self._runtime_session = runtime_session
 
         @classmethod
         def matches(cls, policy: object) -> bool:
@@ -166,13 +166,13 @@ def test_toy_runner_and_backend_work_without_core_edits(tmp_path: Path, restore_
             cls,
             manifest: dict[str, Any],
             artifacts_dir: Path,
-            runtime_adapter: ToyRuntimeAdapter,
+            runtime_session: ToyRuntimeSession,
         ) -> ToyRunner:
             del manifest, artifacts_dir
-            return cls(runtime_adapter)
+            return cls(runtime_session)
 
         def run(self, batch: dict[str, np.ndarray]) -> np.ndarray:
-            return self._runtime_adapter.run("toy", batch)["action"]
+            return self._runtime_session.run("toy", batch)["action"]
 
         def reset(self) -> None:
             return None
