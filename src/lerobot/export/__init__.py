@@ -36,12 +36,33 @@ from . import (
     backends as _backends,  # noqa: F401
     runners as _runners,  # noqa: F401
 )
-from .exporter import export_policy
 from .manifest import Manifest
 from .policy import ExportedPolicy
 
 if TYPE_CHECKING:
-    pass
+    from torch import Tensor
+
+
+def export_policy(
+    policy: object,
+    output_dir: str | Path,
+    *,
+    backend: str = "onnx",
+    example_batch: dict[str, Tensor] | None = None,
+    opset_version: int = 17,
+    include_normalization: bool = True,
+) -> Path:
+    """Export a policy package, importing the PyTorch exporter only when needed."""
+    from .exporter import export_policy as _export_policy
+
+    return _export_policy(
+        policy,
+        output_dir,
+        backend=backend,
+        example_batch=example_batch,
+        opset_version=opset_version,
+        include_normalization=include_normalization,
+    )
 
 
 def load_exported_policy(

@@ -16,8 +16,11 @@
 
 from .normalize import build_denormalize_processor_specs, build_normalize_processor_specs
 from .pi05 import build_pi05_processor_specs
+from .runtime import ExportProcessorPipeline, build_processor_pipeline
 
 __all__ = [
+    "ExportProcessorPipeline",
+    "build_processor_pipeline",
     "build_denormalize_processor_specs",
     "build_normalize_processor_specs",
     "build_pi05_processor_specs",

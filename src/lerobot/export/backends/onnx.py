@@ -21,7 +21,6 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
 import numpy as np
-import torch
 
 from .base import register_backend, resolve_artifact_paths
 
@@ -139,6 +138,8 @@ class ONNXBackend:
         Raises:
             ValueError: If an unknown fixup name is encountered.
         """
+        import torch
+
         opset_version = cast(int, kwargs["opset_version"])
         artifacts: dict[str, str] = {}
         for module in modules:

@@ -36,7 +36,7 @@ import numpy as np
 
 from ..interfaces import _RuntimeSession
 from ..protocols import Exportable, is_exportable
-from .base import ExportModule, build_dynamic_axes, build_normalizer, get_output_by_names, register_runner
+from .base import ExportModule, build_dynamic_axes, get_output_by_names, register_runner
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -71,7 +71,7 @@ class SinglePassRunner:
         """
         self._manifest = manifest
         self._runtime_session = runtime_session
-        self._normalizer = build_normalizer(manifest, artifacts_dir.parent)
+        del artifacts_dir
 
     @classmethod
     def matches(cls, policy: object) -> bool:
@@ -143,9 +143,7 @@ class SinglePassRunner:
     def run(self, batch: dict[str, np.ndarray]) -> np.ndarray:
         """Run a single forward pass and return the action chunk.
 
-        Normalises inputs (if a normaliser is present), runs the ``"model"``
-        stage, denormalises the output action, and squeezes a leading batch
-        dimension of 1.
+        Runs the ``"model"`` stage and squeezes a leading batch dimension of 1.
 
         Args:
             batch: Dict mapping observation key names to numpy arrays.
@@ -153,8 +151,7 @@ class SinglePassRunner:
         Returns:
             Action array of shape ``(chunk_size, action_dim)``.
         """
-        obs = self._normalizer.normalize_inputs(batch) if self._normalizer else batch
-        obs = {k: v.astype(np.float32) for k, v in obs.items()}
+        obs = {k: v.astype(np.float32) for k, v in batch.items()}
 
         outputs = self._runtime_session.run("model", obs)
 
@@ -164,9 +161,6 @@ class SinglePassRunner:
             fallback_names=[],
             context="SinglePassRunner",
         )
-
-        if self._normalizer:
-            action = self._normalizer.denormalize_outputs(action, key="action")
 
         if action.ndim == 3 and action.shape[0] == 1:
             action = action[0]

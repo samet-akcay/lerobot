@@ -35,11 +35,10 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any, ClassVar
 
 import numpy as np
-import torch
 
 from ..interfaces import _RuntimeSession
 from ..protocols import is_exportable
-from .base import ExportModule, build_dynamic_axes, build_normalizer, get_output_by_names, register_runner
+from .base import ExportModule, build_dynamic_axes, get_output_by_names, register_runner
 from .single_pass import DEFAULT_ACTION_CHUNK_SIZE, policy_as_exportable
 
 if TYPE_CHECKING:
@@ -76,7 +75,7 @@ class KVCacheRunner:
         """
         self._manifest = manifest
         self._runtime_session = runtime_session
-        self._normalizer = build_normalizer(manifest, artifacts_dir.parent)
+        del artifacts_dir
 
         runner_cfg = manifest["model"]["runner"]
         self._num_steps: int = runner_cfg.get("num_inference_steps", DEFAULT_DENOISE_STEPS)
@@ -126,6 +125,8 @@ class KVCacheRunner:
         inputs_by_stage = exportable.prepare_inputs(example_batch)
         encoder_stage = inputs_by_stage["encoder"]
         encoder_wrapper = modules["encoder"]
+
+        import torch
 
         with torch.no_grad():
             encoder_outputs = encoder_wrapper(*encoder_stage.tensors)
@@ -221,7 +222,7 @@ class KVCacheRunner:
         """
         num_steps = num_steps or self._num_steps
 
-        obs = self._normalizer.normalize_inputs(batch) if self._normalizer else dict(batch)
+        obs = dict(batch)
 
         if self._input_mapping:
             mapped: dict[str, np.ndarray] = {}
@@ -241,13 +242,6 @@ class KVCacheRunner:
             mask_key = f"img_mask_{i}"
             if mask_key not in obs:
                 obs[mask_key] = np.ones((batch_size,), dtype=np.float32)
-
-        if self._state_dim is not None and "state" in obs:
-            state = obs["state"]
-            current_dim = state.shape[-1]
-            if current_dim < self._state_dim:
-                padding = np.zeros((*state.shape[:-1], self._state_dim - current_dim), dtype=state.dtype)
-                obs["state"] = np.concatenate([state, padding], axis=-1)
 
         encoder_outputs = self._runtime_session.run("encoder", obs)
 
@@ -292,7 +286,7 @@ class KVCacheRunner:
 
             x_t = x_t + dt * v_t
 
-        action = self._normalizer.denormalize_outputs(x_t, key="action") if self._normalizer else x_t
+        action = x_t
 
         if action.shape[-1] > self._output_action_dim:
             action = action[..., : self._output_action_dim]

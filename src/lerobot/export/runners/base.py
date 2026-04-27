@@ -48,7 +48,6 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar, Protocol, runtime_checkable
 
 import numpy as np
-from torch import Tensor, nn
 
 from ..interfaces import _RuntimeSession
 from ..manifest import ProcessorSpec
@@ -56,6 +55,7 @@ from ..normalize import Normalizer
 
 if TYPE_CHECKING:
     from numpy.typing import NDArray
+    from torch import Tensor, nn
 
 logger = logging.getLogger(__name__)
 

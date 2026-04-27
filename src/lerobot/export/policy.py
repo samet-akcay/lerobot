@@ -25,6 +25,8 @@ import numpy as np
 from . import backends as _backends  # noqa: F401
 from .backends import BACKENDS
 from .manifest import Manifest
+from .normalize import Normalizer
+from .processors import ExportProcessorPipeline, build_processor_pipeline
 from .runners.base import RUNNERS, Runner
 
 if TYPE_CHECKING:
@@ -42,7 +44,13 @@ class ExportedPolicy:
     training-time ``PreTrainedPolicy`` API.
     """
 
-    def __init__(self, runner: Runner, manifest: Manifest):
+    def __init__(
+        self,
+        runner: Runner,
+        manifest: Manifest,
+        preprocessor: ExportProcessorPipeline | None = None,
+        postprocessor: ExportProcessorPipeline | None = None,
+    ):
         """Initialise from a pre-built runner and manifest.
 
         Args:
@@ -51,6 +59,8 @@ class ExportedPolicy:
         """
         self._runner = runner
         self._manifest = manifest
+        self._preprocessor = preprocessor or ExportProcessorPipeline()
+        self._postprocessor = postprocessor or ExportProcessorPipeline()
         self._action_queue: deque[NDArray[np.floating]] = deque()
 
     @classmethod
@@ -96,7 +106,23 @@ class ExportedPolicy:
             raise ValueError(f"Unknown backend: {backend_name!r}. Known: {sorted(BACKENDS)}")
         sessions = backend_impl.open(artifacts_dir, manifest_dict, device=device)
         runner = runner_cls.load(manifest_dict, artifacts_dir, sessions)
-        return cls(runner, manifest)
+        normalizer = Normalizer.from_specs(
+            manifest.model.preprocessors,
+            manifest.model.postprocessors,
+            package_path,
+        )
+        preprocessor, relative_processor = build_processor_pipeline(
+            manifest.model.preprocessors,
+            package_path=package_path,
+            normalizer=normalizer,
+        )
+        postprocessor, _ = build_processor_pipeline(
+            manifest.model.postprocessors,
+            package_path=package_path,
+            normalizer=normalizer,
+            relative_processor=relative_processor,
+        )
+        return cls(runner, manifest, preprocessor, postprocessor)
 
     @property
     def manifest(self) -> Manifest:
@@ -109,7 +135,9 @@ class ExportedPolicy:
         Call this between episodes to ensure no stale actions are replayed.
         """
         self._action_queue.clear()
+        self._preprocessor.reset()
         self._runner.reset()
+        self._postprocessor.reset()
 
     def predict_action_chunk(
         self,
@@ -128,7 +156,10 @@ class ExportedPolicy:
             Action array of shape ``(chunk_size, action_dim)`` or
             ``(batch, chunk_size, action_dim)`` depending on the runner.
         """
-        return self._runner.run(observation, **kwargs)
+        processed = self._preprocessor(dict(observation))
+        action = self._runner.run(processed, **kwargs)
+        outputs = self._postprocessor({"action": action})
+        return outputs["action"]
 
     def select_action(
         self,
