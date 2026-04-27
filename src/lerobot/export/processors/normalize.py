@@ -19,49 +19,35 @@ from __future__ import annotations
 from ..manifest import ProcessorSpec
 
 
-def build_normalize_processor_specs(
-    groups: list[tuple[str, list[str]]],
+def build_normalization_processor_specs(
+    input_groups: list[tuple[str, list[str]]],
+    output_groups: list[tuple[str, list[str]]],
     *,
     artifact: str | None,
-) -> list[ProcessorSpec]:
-    """Build a list of ``"normalize"`` processor specs from mode groups.
+) -> tuple[list[ProcessorSpec], list[ProcessorSpec]]:
+    """Build executable normalize/denormalize specs from mode groups.
 
     Args:
-        groups: List of ``(mode, features)`` tuples where ``mode`` is the
-            normalisation mode and ``features`` is the list of feature keys.
+        input_groups: List of ``(mode, features)`` tuples where ``mode`` is the
+            normalisation mode and ``features`` is the list of input feature keys.
+        output_groups: List of ``(mode, features)`` tuples where ``mode`` is the
+            normalisation mode and ``features`` is the list of output feature keys.
         artifact: Relative path to the stats file shared by all specs.
 
     Returns:
-        Ordered list of processor specs ready for the manifest.
+        Ordered ``(preprocessors, postprocessors)`` specs ready for the manifest.
     """
-    return [
+    preprocessors = [
         ProcessorSpec(type="normalize", mode=mode, artifact=artifact, features=features)
-        for mode, features in groups
+        for mode, features in input_groups
     ]
-
-
-def build_denormalize_processor_specs(
-    groups: list[tuple[str, list[str]]],
-    *,
-    artifact: str | None,
-) -> list[ProcessorSpec]:
-    """Build a list of ``"denormalize"`` processor specs from mode groups.
-
-    Args:
-        groups: List of ``(mode, features)`` tuples where ``mode`` is the
-            normalisation mode and ``features`` is the list of feature keys.
-        artifact: Relative path to the stats file shared by all specs.
-
-    Returns:
-        Ordered list of processor specs ready for the manifest.
-    """
-    return [
+    postprocessors = [
         ProcessorSpec(type="denormalize", mode=mode, artifact=artifact, features=features)
-        for mode, features in groups
+        for mode, features in output_groups
     ]
+    return preprocessors, postprocessors
 
 
 __all__ = [
-    "build_denormalize_processor_specs",
-    "build_normalize_processor_specs",
+    "build_normalization_processor_specs",
 ]

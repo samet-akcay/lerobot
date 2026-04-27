@@ -44,7 +44,7 @@ def test_export_policy_raises_when_normalization_stats_missing(
     class DummyPolicy:
         def __init__(self) -> None:
             state_feature = PolicyFeature(type=FeatureType.STATE, shape=(6,))
-            self.config = SimpleNamespace(
+            config = SimpleNamespace(
                 repo_id=None,
                 revision=None,
                 n_obs_steps=1,
@@ -55,6 +55,23 @@ def test_export_policy_raises_when_normalization_stats_missing(
                 image_features={},
                 normalization_mapping={"STATE": NormalizationMode.MEAN_STD},
             )
+            self.config = config
+
+        def export_assets(self, output_dir: Path) -> dict[str, str]:
+            del output_dir
+            return {}
+
+        def export_stats(self, output_dir: Path, *, include_normalization: bool) -> str | None:
+            del output_dir
+            if include_normalization:
+                raise ValueError(
+                    "cannot export policy DummyPolicy: normalization stats required but not available"
+                )
+            return None
+
+        def export_processor_specs(self, *, include_normalization: bool, stats_artifact, assets=None):
+            del include_normalization, stats_artifact, assets
+            return [], []
 
     class DummyRunner:
         type = "single_pass"
@@ -72,8 +89,6 @@ def test_export_policy_raises_when_normalization_stats_missing(
 
     monkeypatch.setattr(exporter, "_select_runner", lambda policy: DummyRunner)
     monkeypatch.setattr(exporter, "BACKENDS", {"onnx": DummyBackend()})
-    monkeypatch.setattr(exporter, "get_policy_stats", lambda policy: None)
-
     with pytest.raises(
         ValueError,
         match=r"cannot export policy DummyPolicy: normalization stats required but not available",

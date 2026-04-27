@@ -19,25 +19,13 @@ from __future__ import annotations
 import json
 from types import SimpleNamespace
 
-from lerobot.export.exporter import build_processor_specs
 from lerobot.export.manifest import Manifest, ModelConfig, PolicyInfo, PolicySource, ProcessorSpec
+from lerobot.export.processors import build_normalization_processor_specs, build_pi05_processor_specs
 
 
 class _Feature:
     def __init__(self, shape: tuple[int, ...]):
         self.shape = shape
-
-
-class ACTPolicyStub:
-    __module__ = "lerobot.policies.act.modeling_act"
-
-    def __init__(self) -> None:
-        self.config = SimpleNamespace(
-            robot_state_feature=_Feature((14,)),
-            env_state_feature=None,
-            image_features={},
-            normalization_mapping={"STATE": "mean_std", "ACTION": "mean_std"},
-        )
 
 
 class PI05PolicyStub:
@@ -56,79 +44,6 @@ class PI05PolicyStub:
             tokenizer_max_length=200,
         )
 
-    def export_preprocessors(
-        self,
-        *,
-        include_normalization: bool,
-        stats_artifact: str,
-        tokenizer_artifact: str | None = None,
-    ):
-        from lerobot.export.manifest import ProcessorSpec
-
-        preprocessors = [
-            ProcessorSpec(
-                type="relative_actions",
-                extra_params={
-                    "enabled": self.config.use_relative_actions,
-                    "exclude_joints": self.config.relative_exclude_joints,
-                    "action_names": self.config.action_feature_names,
-                },
-            )
-        ]
-        if include_normalization:
-            preprocessors.append(
-                ProcessorSpec(
-                    type="normalize",
-                    mode="quantiles",
-                    artifact=stats_artifact,
-                    features=["observation.state"],
-                )
-            )
-        preprocessors.extend(
-            [
-                ProcessorSpec(
-                    type="pi05_prepare_state", extra_params={"max_state_dim": self.config.max_state_dim}
-                ),
-                ProcessorSpec(
-                    type="tokenize",
-                    artifact=tokenizer_artifact,
-                    extra_params={
-                        "tokenizer_name": "google/paligemma-3b-pt-224",
-                        "max_length": self.config.tokenizer_max_length,
-                        "padding_side": "right",
-                        "padding": "max_length",
-                        "truncation": True,
-                    },
-                ),
-            ]
-        )
-        return preprocessors
-
-    def export_postprocessors(
-        self,
-        *,
-        include_normalization: bool,
-        stats_artifact: str,
-        tokenizer_artifact: str | None = None,
-    ):
-        from lerobot.export.manifest import ProcessorSpec
-
-        del tokenizer_artifact
-        postprocessors = []
-        if include_normalization:
-            postprocessors.append(
-                ProcessorSpec(
-                    type="denormalize",
-                    mode="quantiles",
-                    artifact=stats_artifact,
-                    features=["action"],
-                )
-            )
-        postprocessors.append(
-            ProcessorSpec(type="absolute_actions", extra_params={"enabled": self.config.use_relative_actions})
-        )
-        return postprocessors
-
 
 def _assert_roundtrip(spec: ProcessorSpec) -> None:
     payload = spec.to_dict()
@@ -140,10 +55,10 @@ def _assert_roundtrip(spec: ProcessorSpec) -> None:
 
 
 def test_act_normalization_specs_validate_and_roundtrip() -> None:
-    preprocessors, postprocessors = build_processor_specs(
-        ACTPolicyStub(),
-        include_normalization=True,
-        stats_artifact="stats.safetensors",
+    preprocessors, postprocessors = build_normalization_processor_specs(
+        input_groups=[("mean_std", ["observation.state"])],
+        output_groups=[("mean_std", ["action"])],
+        artifact="stats.safetensors",
     )
 
     assert [spec.type for spec in preprocessors] == ["normalize"]
@@ -166,11 +81,17 @@ def test_act_normalization_specs_validate_and_roundtrip() -> None:
 
 
 def test_pi05_processor_specs_validate_and_roundtrip() -> None:
-    preprocessors, postprocessors = build_processor_specs(
-        PI05PolicyStub(),
-        include_normalization=True,
-        stats_artifact="stats.safetensors",
+    pi05_preprocessors, pi05_postprocessors = build_pi05_processor_specs(
+        PI05PolicyStub().config,
+        tokenizer_artifact="tokenizer",
     )
+    norm_preprocessors, norm_postprocessors = build_normalization_processor_specs(
+        input_groups=[("quantiles", ["observation.state"])],
+        output_groups=[("quantiles", ["action"])],
+        artifact="stats.safetensors",
+    )
+    preprocessors = [pi05_preprocessors[0], *norm_preprocessors, *pi05_preprocessors[1:]]
+    postprocessors = [*norm_postprocessors, *pi05_postprocessors]
 
     assert [spec.type for spec in preprocessors] == [
         "relative_actions",
@@ -194,11 +115,17 @@ def test_pi05_processor_specs_validate_and_roundtrip() -> None:
 
 
 def test_manifest_processor_specs_roundtrip_preserves_flat_custom_params(tmp_path) -> None:
-    preprocessors, postprocessors = build_processor_specs(
-        PI05PolicyStub(),
-        include_normalization=True,
-        stats_artifact="stats.safetensors",
+    pi05_preprocessors, pi05_postprocessors = build_pi05_processor_specs(
+        PI05PolicyStub().config,
+        tokenizer_artifact="tokenizer",
     )
+    norm_preprocessors, norm_postprocessors = build_normalization_processor_specs(
+        input_groups=[("quantiles", ["observation.state"])],
+        output_groups=[("quantiles", ["action"])],
+        artifact="stats.safetensors",
+    )
+    preprocessors = [pi05_preprocessors[0], *norm_preprocessors, *pi05_preprocessors[1:]]
+    postprocessors = [*norm_postprocessors, *pi05_postprocessors]
 
     manifest = Manifest(
         policy=PolicyInfo(

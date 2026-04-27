@@ -1281,39 +1281,30 @@ class PI05Policy(PreTrainedPolicy):
             output_names=["v_t"],
         )
 
-    def export_preprocessors(
+    def export_processor_specs(
         self,
         *,
         include_normalization: bool,
-        stats_artifact: str,
-        tokenizer_artifact: str | None = None,
-    ) -> list[ProcessorSpec]:
-        preprocessors, _ = build_pi05_processor_specs(self.config, tokenizer_artifact=tokenizer_artifact)
-        if not include_normalization:
-            return preprocessors
-        base = super().export_preprocessors(
-            include_normalization=include_normalization,
-            stats_artifact=stats_artifact,
-            tokenizer_artifact=tokenizer_artifact,
+        stats_artifact: str | None,
+        assets: dict[str, str] | None = None,
+    ) -> tuple[list[ProcessorSpec], list[ProcessorSpec]]:
+        assets = assets or {}
+        preprocessors, postprocessors = build_pi05_processor_specs(
+            self.config,
+            tokenizer_artifact=assets.get("tokenizer_artifact"),
         )
-        return [preprocessors[0], *base, *preprocessors[1:]]
+        if not include_normalization:
+            return preprocessors, postprocessors
 
-    def export_postprocessors(
-        self,
-        *,
-        include_normalization: bool,
-        stats_artifact: str,
-        tokenizer_artifact: str | None = None,
-    ) -> list[ProcessorSpec]:
-        _, postprocessors = build_pi05_processor_specs(self.config, tokenizer_artifact=tokenizer_artifact)
-        if not include_normalization:
-            return postprocessors
-        base = super().export_postprocessors(
+        base_preprocessors, base_postprocessors = super().export_processor_specs(
             include_normalization=include_normalization,
             stats_artifact=stats_artifact,
-            tokenizer_artifact=tokenizer_artifact,
+            assets=assets,
         )
-        return [*base, *postprocessors]
+        return [preprocessors[0], *base_preprocessors, *preprocessors[1:]], [
+            *base_postprocessors,
+            *postprocessors,
+        ]
 
     def export_assets(self, output_dir: Path) -> dict[str, str]:
         from transformers import AutoTokenizer

@@ -30,15 +30,10 @@ from . import (
 from ._package_utils import (
     build_hardware_config,
     generate_example_batch,
-    get_normalization_groups,
-    get_normalized_input_features,
-    get_policy_stats,
     save_policy_config,
 )
 from .backends import BACKENDS
-from .manifest import Manifest, Metadata, ModelConfig, PolicyInfo, PolicySource, ProcessorSpec
-from .normalize import save_stats_safetensors
-from .processors import build_denormalize_processor_specs, build_normalize_processor_specs
+from .manifest import Manifest, Metadata, ModelConfig, PolicyInfo, PolicySource
 from .runners.base import RUNNERS, Runner
 
 if TYPE_CHECKING:
@@ -49,70 +44,7 @@ logger = logging.getLogger(__name__)
 DEFAULT_ONNX_OPSET: int = 17
 # ONNX opset 17 matches ORT 1.16+ and supports the operators used by ACT/PI05 exports.
 
-__all__ = ["build_processor_specs", "export_policy"]
-
-
-def build_processor_specs(
-    policy: PreTrainedPolicy,
-    *,
-    include_normalization: bool,
-    stats_artifact: str,
-    tokenizer_artifact: str | None = None,
-) -> tuple[list[ProcessorSpec], list[ProcessorSpec]]:
-    if hasattr(policy, "export_preprocessors") and hasattr(policy, "export_postprocessors"):
-        return (
-            policy.export_preprocessors(
-                include_normalization=include_normalization,
-                stats_artifact=stats_artifact,
-                tokenizer_artifact=tokenizer_artifact,
-            ),
-            policy.export_postprocessors(
-                include_normalization=include_normalization,
-                stats_artifact=stats_artifact,
-                tokenizer_artifact=tokenizer_artifact,
-            ),
-        )
-
-    preprocessors: list[ProcessorSpec] = []
-    postprocessors: list[ProcessorSpec] = []
-    if include_normalization:
-        input_features = get_normalized_input_features(policy)
-        preprocessors.extend(
-            build_normalize_processor_specs(
-                get_normalization_groups(policy, input_features),
-                artifact=stats_artifact,
-            )
-        )
-        postprocessors.extend(
-            build_denormalize_processor_specs(
-                get_normalization_groups(policy, ["action"]),
-                artifact=stats_artifact,
-            )
-        )
-    return preprocessors, postprocessors
-
-
-def _export_assets(policy: PreTrainedPolicy, output_dir: Path) -> dict[str, str]:
-    if hasattr(policy, "export_assets"):
-        return policy.export_assets(output_dir)
-    return {}
-
-
-def _export_stats(policy: PreTrainedPolicy, output_dir: Path, *, include_normalization: bool) -> str | None:
-    if hasattr(policy, "export_stats"):
-        return policy.export_stats(output_dir, include_normalization=include_normalization)
-
-    if not include_normalization:
-        return None
-
-    stats = get_policy_stats(policy)
-    if not stats:
-        raise ValueError(
-            f"cannot export policy {type(policy).__name__}: normalization stats required but not available"
-        )
-    stats_path = output_dir / "stats.safetensors"
-    save_stats_safetensors(stats, stats_path)
-    return stats_path.name
+__all__ = ["export_policy"]
 
 
 def _policy_class_path(policy: PreTrainedPolicy) -> str:
@@ -175,13 +107,12 @@ def export_policy(
     if backend_impl.runtime_only:
         raise ValueError(f"Backend {serialization_backend!r} is runtime-only and cannot serialize a model.")
     artifacts = backend_impl.serialize(modules, artifacts_dir, opset_version=opset_version)
-    export_assets = _export_assets(policy, output_dir)
-    stats_artifact = _export_stats(policy, output_dir, include_normalization=include_normalization)
-    preprocessors, postprocessors = build_processor_specs(
-        policy,
+    export_assets = policy.export_assets(output_dir)
+    stats_artifact = policy.export_stats(output_dir, include_normalization=include_normalization)
+    preprocessors, postprocessors = policy.export_processor_specs(
         include_normalization=include_normalization and bool(stats_artifact),
-        stats_artifact=stats_artifact or "stats.safetensors",
-        tokenizer_artifact=export_assets.get("tokenizer_artifact"),
+        stats_artifact=stats_artifact,
+        assets=export_assets,
     )
 
     save_policy_config(policy, assets_dir / "config.json")

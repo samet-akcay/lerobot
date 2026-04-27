@@ -96,42 +96,27 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
             include_normalization=include_normalization,
         )
 
-    def export_preprocessors(
+    def export_processor_specs(
         self,
         *,
         include_normalization: bool,
-        stats_artifact: str,
-        tokenizer_artifact: str | None = None,
+        stats_artifact: str | None,
+        assets: dict[str, str] | None = None,
     ):
-        del tokenizer_artifact
+        del assets
         if not include_normalization:
-            return []
+            return [], []
+
+        if stats_artifact is None:
+            raise ValueError("normalization processor specs require a stats artifact")
 
         from lerobot.export._package_utils import get_normalization_groups, get_normalized_input_features
-        from lerobot.export.processors import build_normalize_processor_specs
+        from lerobot.export.processors import build_normalization_processor_specs
 
         input_features = get_normalized_input_features(self)
-        return build_normalize_processor_specs(
-            get_normalization_groups(self, input_features),
-            artifact=stats_artifact,
-        )
-
-    def export_postprocessors(
-        self,
-        *,
-        include_normalization: bool,
-        stats_artifact: str,
-        tokenizer_artifact: str | None = None,
-    ):
-        del tokenizer_artifact
-        if not include_normalization:
-            return []
-
-        from lerobot.export._package_utils import get_normalization_groups
-        from lerobot.export.processors import build_denormalize_processor_specs
-
-        return build_denormalize_processor_specs(
-            get_normalization_groups(self, ["action"]),
+        return build_normalization_processor_specs(
+            input_groups=get_normalization_groups(self, input_features),
+            output_groups=get_normalization_groups(self, ["action"]),
             artifact=stats_artifact,
         )
 

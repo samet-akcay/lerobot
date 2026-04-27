@@ -50,8 +50,6 @@ from typing import TYPE_CHECKING, Any, ClassVar, Protocol, runtime_checkable
 import numpy as np
 
 from ..interfaces import _RuntimeSession
-from ..manifest import ProcessorSpec
-from ..normalize import Normalizer
 
 if TYPE_CHECKING:
     from numpy.typing import NDArray
@@ -64,7 +62,6 @@ __all__ = [
     "RUNNERS",
     "Runner",
     "build_dynamic_axes",
-    "build_normalizer",
     "get_output_by_names",
     "register_runner",
 ]
@@ -217,32 +214,6 @@ def build_dynamic_axes(input_names: list[str], output_names: list[str]) -> dict[
     for name in output_names:
         dynamic_axes[name] = {0: "batch_size"}
     return dynamic_axes
-
-
-def build_normalizer(manifest: dict[str, Any], package_path: Path) -> Normalizer | None:
-    """Construct a :class:`~lerobot.export.normalize.Normalizer` from manifest specs.
-
-    Reads the ``preprocessors`` and ``postprocessors`` lists from the manifest
-    and instantiates a :class:`~lerobot.export.normalize.Normalizer` that can
-    normalise inputs and denormalise outputs at runtime.
-
-    Args:
-        manifest: Parsed manifest dict.
-        package_path: Root directory of the exported package (used to resolve
-            relative artifact paths such as ``stats.safetensors``).
-
-    Returns:
-        A :class:`~lerobot.export.normalize.Normalizer` instance, or ``None``
-        if neither preprocessors nor postprocessors are present.
-    """
-    model = manifest["model"]
-    preprocessors = model.get("preprocessors")
-    postprocessors = model.get("postprocessors")
-    return Normalizer.from_specs(
-        [ProcessorSpec.from_dict(spec) for spec in preprocessors] if preprocessors else None,
-        [ProcessorSpec.from_dict(spec) for spec in postprocessors] if postprocessors else None,
-        package_path,
-    )
 
 
 def get_output_by_names(
