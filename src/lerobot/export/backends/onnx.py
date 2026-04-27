@@ -29,10 +29,10 @@ if TYPE_CHECKING:
     from ..interfaces import _RuntimeSession
     from ..runners.base import ExportModule
 
-__all__ = ["ONNXBackend", "ONNXRuntimeAdapter"]
+__all__ = ["ONNXBackend", "ONNXRuntimeSession"]
 
 
-class ONNXRuntimeAdapter:
+class ONNXRuntimeSession:
     """Live ONNX inference session wrapping one or more ``onnxruntime`` sessions.
 
     Holds a dict of named :class:`onnxruntime.InferenceSession` objects (one
@@ -178,7 +178,7 @@ class ONNXBackend:
                 ``"cuda:N"``).
 
         Returns:
-            An :class:`ONNXRuntimeAdapter` wrapping the loaded sessions.
+            An :class:`ONNXRuntimeSession` wrapping the loaded sessions.
 
         Raises:
             ImportError: If ``onnxruntime`` is not installed.
@@ -199,7 +199,7 @@ class ONNXBackend:
             for name, path in resolve_artifact_paths(artifacts_dir, manifest).items()
             if path.suffix == self.extension
         }
-        return ONNXRuntimeAdapter(sessions)
+        return ONNXRuntimeSession(sessions)
 
 
 def _get_providers(device: str) -> list[str | tuple[str, dict[str, int]]]:

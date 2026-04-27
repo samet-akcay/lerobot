@@ -27,7 +27,7 @@ if TYPE_CHECKING:
     from ..interfaces import _RuntimeSession
     from ..runners.base import ExportModule
 
-__all__ = ["OpenVINOBackend", "OpenVINORuntimeAdapter"]
+__all__ = ["OpenVINOBackend", "OpenVINORuntimeSession"]
 
 VALID_OPENVINO_DEVICES = ["cpu", "gpu", "npu", "auto"]
 
@@ -39,7 +39,7 @@ VALID_OPENVINO_DEVICES = ["cpu", "gpu", "npu", "auto"]
 _OPENVINO_COMPILE_CONFIG = {"INFERENCE_PRECISION_HINT": "f32"}
 
 
-class OpenVINORuntimeAdapter:
+class OpenVINORuntimeSession:
     """Live OpenVINO inference session wrapping compiled model infer requests.
 
     Holds a dict of named ``openvino.InferRequest`` objects (one per exported
@@ -151,7 +151,7 @@ class OpenVINOBackend:
 
         Reads each ``.onnx`` artifact, compiles it with ``openvino.Core``,
         and wraps the resulting infer requests in an
-        :class:`OpenVINORuntimeAdapter`.
+        :class:`OpenVINORuntimeSession`.
 
         Args:
             artifacts_dir: Directory containing the ``.onnx`` files.
@@ -160,7 +160,7 @@ class OpenVINOBackend:
                 ``"npu"``, ``"auto"``).
 
         Returns:
-            An :class:`OpenVINORuntimeAdapter` ready for inference.
+            An :class:`OpenVINORuntimeSession` ready for inference.
 
         Raises:
             ImportError: If ``openvino`` is not installed.
@@ -206,7 +206,7 @@ class OpenVINOBackend:
                 if original != compiled
             }
 
-        return OpenVINORuntimeAdapter(
+        return OpenVINORuntimeSession(
             infer_requests,
             input_names,
             output_names,
