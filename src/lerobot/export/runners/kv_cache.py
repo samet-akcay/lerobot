@@ -231,8 +231,11 @@ class KVCacheRunner:
                 mapped[onnx_key] = value
             obs = mapped
 
-        for key in list(obs.keys()):
-            obs[key] = obs[key].astype(np.float32)
+        obs = {
+            key: _coerce_runtime_input(key, value)
+            for key, value in obs.items()
+            if hasattr(value, "astype")
+        }
 
         first_obs = next(iter(obs.values()))
         batch_size = first_obs.shape[0] if first_obs.ndim > 1 else 1
@@ -299,3 +302,9 @@ class KVCacheRunner:
     def reset(self) -> None:
         """No-op: KV-cache runner has no persistent state between episodes."""
         return None
+
+
+def _coerce_runtime_input(key: str, value: np.ndarray) -> np.ndarray:
+    if key == "lang_tokens":
+        return value.astype(np.int64)
+    return value.astype(np.float32)

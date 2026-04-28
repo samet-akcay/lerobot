@@ -173,6 +173,41 @@ class TestPI05Export:
         )
 
     @pytest.mark.slow
+    def test_runtime_accepts_raw_task_for_tokenize_processor(self, tmp_path: Path):
+        from lerobot.export import load_exported_policy
+
+        policy, batch = create_pi05_policy_and_batch()
+        load_cached_paligemma_tokenizer()
+        noise = torch.randn(
+            1,
+            policy.config.chunk_size,
+            policy.config.max_action_dim,
+            device=batch["observation.state"].device,
+        )
+
+        package_path = policy.to_onnx(
+            tmp_path / "pi05_package",
+            example_batch=batch,
+            include_normalization=False,
+        )
+
+        runtime = load_exported_policy(package_path, backend="onnx", device="cpu")
+        runtime_batch = {
+            key: value.cpu().numpy()
+            for key, value in batch.items()
+            if key not in {"observation.language.tokens", "observation.language.attention_mask"}
+        }
+        runtime_batch["task"] = "pick up the red block"
+
+        output = runtime.predict_action_chunk(
+            runtime_batch,
+            noise=noise.cpu().numpy(),
+            num_steps=policy.config.num_inference_steps,
+        )
+
+        assert output.shape == (policy.config.chunk_size, policy.config.output_features["action"].shape[0])
+
+    @pytest.mark.slow
     def test_pi05_stagewise_onnx_parity_locks_in_known_good_accuracy(self, tmp_path: Path):
         """
         Stage-wise ONNX accuracy is excellent (encoder ~3e-6, denoise ~9e-7).
