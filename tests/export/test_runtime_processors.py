@@ -59,7 +59,7 @@ def test_runtime_processor_pipeline_executes_normalize_and_denormalize(tmp_path)
     np.testing.assert_allclose(output["action"], np.array([[5.0, 5.0]], dtype=np.float32))
 
 
-def test_runtime_processor_pipeline_executes_relative_and_absolute_actions() -> None:
+def test_runtime_processor_pipeline_executes_relative_and_absolute_actions(tmp_path) -> None:
     preprocessors = [
         ProcessorSpec(
             type="relative_actions",
@@ -72,8 +72,8 @@ def test_runtime_processor_pipeline_executes_relative_and_absolute_actions() -> 
     ]
     postprocessors = [ProcessorSpec(type="absolute_actions", extra_params={"enabled": True})]
 
-    pre, relative = build_processor_pipeline(preprocessors, package_path=None)  # type: ignore[arg-type]
-    post, _ = build_processor_pipeline(postprocessors, package_path=None, relative_processor=relative)  # type: ignore[arg-type]
+    pre, relative = build_processor_pipeline(preprocessors, package_path=tmp_path)
+    post, _ = build_processor_pipeline(postprocessors, package_path=tmp_path, relative_processor=relative)
 
     raw = {
         "observation.state": np.array([[10.0, 20.0]], dtype=np.float32),
@@ -86,9 +86,9 @@ def test_runtime_processor_pipeline_executes_relative_and_absolute_actions() -> 
     np.testing.assert_allclose(recovered["action"], raw["action"])
 
 
-def test_runtime_processor_pipeline_fails_on_unknown_processor() -> None:
+def test_runtime_processor_pipeline_fails_on_unknown_processor(tmp_path) -> None:
     with pytest.raises(ValueError, match="Unknown export processor type"):
-        build_processor_pipeline([ProcessorSpec(type="not_real")], package_path=None)  # type: ignore[arg-type]
+        build_processor_pipeline([ProcessorSpec(type="not_real")], package_path=tmp_path)
 
 
 def test_runtime_processor_pipeline_executes_tokenize(tmp_path) -> None:
