@@ -79,6 +79,24 @@ def test_toy_runner_and_backend_work_without_core_edits(tmp_path: Path, restore_
             self.model = AddOne().eval()
             self.config.stats = None
 
+        def export_assets(self, output_dir: Path) -> dict[str, str]:
+            del output_dir
+            return {}
+
+        def export_stats(self, output_dir: Path, *, include_normalization: bool) -> str | None:
+            del output_dir, include_normalization
+            return None
+
+        def export_processor_specs(
+            self,
+            *,
+            include_normalization: bool,
+            stats_artifact: str | None,
+            assets: dict[str, str] | None = None,
+        ) -> tuple[list, list]:
+            del include_normalization, stats_artifact, assets
+            return [], []
+
     class ToyRuntimeSession:
         def __init__(
             self, modules: dict[str, torch.jit.ScriptModule], io_specs: dict[str, dict[str, list[str]]]
