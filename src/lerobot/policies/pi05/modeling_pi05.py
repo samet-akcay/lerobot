@@ -27,7 +27,7 @@ import torch
 import torch.nn.functional as F  # noqa: N812
 from torch import Tensor, nn
 
-from lerobot.export.configs import KVCacheExportConfig
+from lerobot.export.configs import KVCacheFlowExportConfig
 from lerobot.export.manifest import ProcessorSpec
 from lerobot.export.processors import build_pi05_processor_specs
 from lerobot.export.protocols import ExportInputs
@@ -1113,23 +1113,23 @@ class PI05Policy(PreTrainedPolicy):
         """Return the inference type identifier for runner selection.
 
         Returns:
-            ``"kv_cache"`` — PI05 uses the KV-cache autoregressive runner.
+            ``"kv_cache_flow"`` — PI05 uses the KV-cache flow-matching runner.
         """
-        return "kv_cache"
+        return "kv_cache_flow"
 
-    def get_export_config(self) -> KVCacheExportConfig:
-        """Build the KV-cache export configuration from the policy config.
+    def get_export_config(self) -> KVCacheFlowExportConfig:
+        """Build the KV-cache flow-matching export configuration from the policy config.
 
         Reads Gemma architecture parameters (depth, num_kv_heads, head_dim)
         from the PaliGemma variant config and combines them with policy-level
         settings (chunk_size, action_dim, num_inference_steps).
 
         Returns:
-            A :class:`~lerobot.export.configs.KVCacheExportConfig` instance
+            A :class:`~lerobot.export.configs.KVCacheFlowExportConfig` instance
             describing the model dimensions needed for export.
         """
         gemma_cfg = get_gemma_config(self.config.paligemma_variant)
-        return KVCacheExportConfig(
+        return KVCacheFlowExportConfig(
             num_layers=gemma_cfg.depth,
             num_kv_heads=gemma_cfg.num_kv_heads,
             head_dim=gemma_cfg.head_dim,

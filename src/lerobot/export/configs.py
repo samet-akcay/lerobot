@@ -17,8 +17,8 @@
 
 Each supported runner family has a matching config dataclass:
 
-- :class:`SinglePassExportConfig` -> :class:`~lerobot.export.runners.single_pass.SinglePassRunner`
-- :class:`KVCacheExportConfig`    -> :class:`~lerobot.export.runners.kv_cache.KVCacheRunner`
+- :class:`SinglePassExportConfig`    -> :class:`~lerobot.export.runners.single_pass.SinglePassRunner`
+- :class:`KVCacheFlowExportConfig`   -> :class:`~lerobot.export.runners.kv_cache_flow.KVCacheFlowRunner`
 """
 
 from __future__ import annotations
@@ -39,11 +39,11 @@ class SinglePassExportConfig:
 
 
 @dataclass
-class KVCacheExportConfig:
-    """Configuration for KV-cache (VLA) export.
+class KVCacheFlowExportConfig:
+    """Configuration for KV-cache flow-matching (VLA) export.
 
     Captures architecture-specific information needed to export a KV-cache
-    policy and reconstruct the KV cache at runtime.
+    flow-matching policy (e.g. PI05) and reconstruct the KV cache at runtime.
     """
 
     num_layers: int
@@ -58,11 +58,11 @@ class KVCacheExportConfig:
     input_mapping: dict[str, str] = field(default_factory=dict)
 
 
-ExportConfig = SinglePassExportConfig | KVCacheExportConfig
+ExportConfig = SinglePassExportConfig | KVCacheFlowExportConfig
 
 
 __all__ = [
     "ExportConfig",
-    "KVCacheExportConfig",
+    "KVCacheFlowExportConfig",
     "SinglePassExportConfig",
 ]

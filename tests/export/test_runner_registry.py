@@ -23,7 +23,7 @@ from torch import nn
 
 from lerobot.export.exporter import _select_runner
 from lerobot.export.runners.base import RUNNERS, ExportModule
-from lerobot.export.runners.kv_cache import KVCacheRunner
+from lerobot.export.runners.kv_cache_flow import KVCacheFlowRunner
 from lerobot.export.runners.single_pass import SinglePassRunner
 from tests.export.conftest import (
     create_act_policy_and_batch,
@@ -43,7 +43,7 @@ def test_select_runner_returns_expected_class_for_act() -> None:
 def test_select_runner_returns_expected_class_for_pi05() -> None:
     pytest.importorskip("transformers")
     policy, _ = create_pi05_policy_and_batch(device="cuda")
-    assert _select_runner(policy) is KVCacheRunner
+    assert _select_runner(policy) is KVCacheFlowRunner
 
 
 def test_select_runner_raises_for_unrecognized_policy() -> None:
@@ -53,14 +53,14 @@ def test_select_runner_raises_for_unrecognized_policy() -> None:
 
 def test_runtime_registry_lookup_returns_concrete_classes() -> None:
     assert next(r for r in RUNNERS if r.type == "single_pass") is SinglePassRunner
-    assert next(r for r in RUNNERS if r.type == "kv_cache") is KVCacheRunner
+    assert next(r for r in RUNNERS if r.type == "kv_cache_flow") is KVCacheFlowRunner
 
 
 @pytest.mark.parametrize(
     ("factory", "kwargs", "expected_type", "expected_names"),
     [
         (create_act_policy_and_batch, {"device": "cpu"}, SinglePassRunner, ["model"]),
-        (create_pi05_policy_and_batch, {"device": "cuda"}, KVCacheRunner, ["encoder", "denoise"]),
+        (create_pi05_policy_and_batch, {"device": "cuda"}, KVCacheFlowRunner, ["encoder", "denoise"]),
     ],
 )
 def test_runner_exports_have_structural_invariants(
@@ -100,9 +100,9 @@ def test_single_pass_runner_export_shape() -> None:
     assert modules[0].output_names == ["action"]
 
 
-def test_kv_cache_runner_export_shape() -> None:
+def test_kv_cache_flow_runner_export_shape() -> None:
     pytest.importorskip("transformers")
     policy, batch = create_pi05_policy_and_batch(device="cuda")
-    modules, _ = KVCacheRunner.export(policy, batch)
+    modules, _ = KVCacheFlowRunner.export(policy, batch)
 
     assert [module.name for module in modules] == ["encoder", "denoise"]

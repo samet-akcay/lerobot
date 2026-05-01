@@ -150,7 +150,7 @@ class TestManifestSchema:
         assert loaded.model.runner["action_dim"] == 6
         assert loaded.model.runner["beta_start"] == 0.0001
 
-    def test_kv_cache_roundtrip(self, tmp_path: Path):
+    def test_kv_cache_flow_roundtrip(self, tmp_path: Path):
         from lerobot.export.manifest import (
             Manifest,
             ModelConfig,
@@ -162,7 +162,7 @@ class TestManifestSchema:
             model=ModelConfig(
                 n_obs_steps=1,
                 runner={
-                    "type": "kv_cache",
+                    "type": "kv_cache_flow",
                     "chunk_size": 50,
                     "n_action_steps": 50,
                     "action_dim": 32,

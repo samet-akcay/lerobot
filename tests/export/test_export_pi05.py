@@ -46,7 +46,7 @@ def _read_manifest(package_path: Path) -> dict[str, Any]:
 
 class TestPI05Export:
     @pytest.mark.slow
-    def test_export_manifest_runner_type_kv_cache_and_tokenizer_assets(self, tmp_path: Path):
+    def test_export_manifest_runner_type_kv_cache_flow_and_tokenizer_assets(self, tmp_path: Path):
         from transformers import AutoTokenizer
 
         policy, batch = create_pi05_policy_and_batch()
@@ -56,7 +56,7 @@ class TestPI05Export:
 
         manifest = _read_manifest(package_path)
 
-        assert manifest["model"]["runner"]["type"] == "kv_cache"
+        assert manifest["model"]["runner"]["type"] == "kv_cache_flow"
         assert manifest["model"]["artifacts"] == {"encoder": "encoder.onnx", "denoise": "denoise.onnx"}
         assert manifest["policy"]["source"]["class_path"] == "lerobot.policies.pi05.modeling_pi05.PI05Policy"
         assert "backend" not in manifest["model"]

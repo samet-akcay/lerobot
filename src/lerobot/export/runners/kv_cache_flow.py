@@ -13,14 +13,18 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""KV-cache runner: encode once, then decode autoregressively with cached attention.
+"""KV-cache flow-matching runner: encode once, then iterate flow-matching denoise.
 
-This carve-out keeps the ``kv_cache`` manifest type for PI05 because the policy
-is an autoregressive token-decoding family rather than a two-phase iterative
-denoiser. The exported package contains two stages: ``encoder`` runs once per
-observation to produce ``past_*`` KV tensors and a ``prefix_pad_mask``;
-``denoise`` then advances decoding with the cached prefix and an evolving
-``x_t``.
+Used by VLA policies that combine a prefix encoder with cached KV attention
+(e.g. PI05) and a flow-matching action head integrated with Euler steps. The
+exported package contains two stages: ``encoder`` runs once per observation to
+produce ``past_*`` KV tensors and a ``prefix_pad_mask``; ``denoise`` then runs
+``num_inference_steps`` Euler integration steps with the cached prefix and an
+evolving ``x_t``.
+
+Future work: GR00T-style fused flow-matching policies (no prefix encoder, no
+KV cache) are a planned sibling runner that would share an Euler-integration
+mixin with this class.
 
 Example::
 
@@ -46,23 +50,23 @@ if TYPE_CHECKING:
 
     from torch import Tensor
 
-__all__ = ["KVCacheRunner"]
+__all__ = ["KVCacheFlowRunner"]
 
 DEFAULT_DENOISE_STEPS: int = 10
 # Ten denoise steps preserve the current flow-matching export/runtime behavior.
 
 
 @register_runner
-class KVCacheRunner:
-    """Runner for autoregressive KV-cache policies (e.g. PI05).
+class KVCacheFlowRunner:
+    """Runner for KV-cache flow-matching policies (e.g. PI05).
 
-    Implements the ``"kv_cache"`` manifest runner type.  The encoder stage
-    runs once per observation to produce prefix KV tensors; the denoise stage
-    then iterates ``num_inference_steps`` times using Euler integration to
-    produce the action chunk.
+    Implements the ``"kv_cache_flow"`` manifest runner type.  The encoder
+    stage runs once per observation to produce prefix KV tensors; the denoise
+    stage then iterates ``num_inference_steps`` times using Euler integration
+    to produce the action chunk.
     """
 
-    type: ClassVar[str] = "kv_cache"
+    type: ClassVar[str] = "kv_cache_flow"
 
     def __init__(self, manifest: dict[str, Any], artifacts_dir: Path, runtime_session: _RuntimeSession):
         """Initialise from a loaded manifest and backend session.
@@ -87,14 +91,14 @@ class KVCacheRunner:
 
     @classmethod
     def matches(cls, policy: object) -> bool:
-        """Return ``True`` for policies that declare ``"kv_cache"`` inference type.
+        """Return ``True`` for policies that declare ``"kv_cache_flow"`` inference type.
 
         Args:
             policy: Policy instance to test.
 
         Returns:
             ``True`` when the policy implements :class:`Exportable` and its
-            ``get_inference_type()`` returns ``"kv_cache"``.
+            ``get_inference_type()`` returns ``"kv_cache_flow"``.
         """
         return is_exportable(policy) and policy.get_inference_type() == cls.type
 
@@ -181,7 +185,7 @@ class KVCacheRunner:
         manifest: dict[str, Any],
         artifacts_dir: Path,
         runtime_session: _RuntimeSession,
-    ) -> KVCacheRunner:
+    ) -> KVCacheFlowRunner:
         """Instantiate from a loaded manifest and backend session.
 
         Args:
@@ -191,7 +195,7 @@ class KVCacheRunner:
                 ``"denoise"`` stages.
 
         Returns:
-            A ready-to-use :class:`KVCacheRunner`.
+            A ready-to-use :class:`KVCacheFlowRunner`.
         """
         return cls(manifest, artifacts_dir, runtime_session)
 
@@ -232,9 +236,7 @@ class KVCacheRunner:
             obs = mapped
 
         obs = {
-            key: _coerce_runtime_input(key, value)
-            for key, value in obs.items()
-            if hasattr(value, "astype")
+            key: _coerce_runtime_input(key, value) for key, value in obs.items() if hasattr(value, "astype")
         }
 
         first_obs = next(iter(obs.values()))
@@ -284,7 +286,7 @@ class KVCacheRunner:
                 outputs,
                 primary_name="v_t",
                 fallback_names=["velocity"],
-                context="KVCacheRunner.denoise",
+                context="KVCacheFlowRunner.denoise",
             )
 
             x_t = x_t + dt * v_t

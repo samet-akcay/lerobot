@@ -134,7 +134,7 @@ def test_manifest_processor_specs_roundtrip_preserves_flat_custom_params(tmp_pat
         ),
         model=ModelConfig(
             n_obs_steps=1,
-            runner={"type": "kv_cache"},
+            runner={"type": "kv_cache_flow"},
             artifacts={"encoder": "encoder.onnx", "denoise": "denoise.onnx"},
             preprocessors=preprocessors,
             postprocessors=postprocessors,

@@ -439,7 +439,8 @@ class Manifest:
     - ``single_pass`` — one forward pass that emits the full action chunk
       (e.g. ACT and other feedforward chunk-emitting policies)
     - ``iterative`` — legacy multi-step denoising / flow-matching manifests
-    - ``kv_cache`` — encode once, then autoregressive token decoding
+    - ``kv_cache_flow`` — encode prefix once with KV cache, then iterate
+      flow-matching Euler denoise steps (e.g. PI05)
     """
 
     policy: PolicyInfo

@@ -36,7 +36,7 @@ from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 from .configs import (
     ExportConfig,
-    KVCacheExportConfig,
+    KVCacheFlowExportConfig,
     SinglePassExportConfig,
 )
 
@@ -47,7 +47,7 @@ __all__ = [
     "ExportConfig",
     "ExportInputs",
     "Exportable",
-    "KVCacheExportConfig",
+    "KVCacheFlowExportConfig",
     "SinglePassExportConfig",
     "is_exportable",
 ]
@@ -90,7 +90,7 @@ class Exportable(Protocol):
     def get_inference_type(self) -> str:
         """Return the inference pattern identifier.
 
-        One of: ``"single_pass"``, ``"kv_cache"``.
+        One of: ``"single_pass"``, ``"kv_cache_flow"``.
         """
         ...
 
