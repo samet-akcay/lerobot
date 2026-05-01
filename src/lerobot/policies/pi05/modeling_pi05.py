@@ -1321,7 +1321,10 @@ class PI05Policy(PreTrainedPolicy):
             )
         except OSError as e:
             raise ValueError(
-                f"PI05 tokenizer assets missing at {tokenizer_dir}; run online once to populate cache"
+                f"PI05 tokenizer {PI05_TOKENIZER_NAME!r} not found in the local Hugging Face cache "
+                f"(loaded with local_files_only=True). Run any code path that fetches it online once "
+                f"(e.g. AutoTokenizer.from_pretrained({PI05_TOKENIZER_NAME!r})) to populate the cache, "
+                f"then re-run export. Underlying error: {e}"
             ) from e
         tokenizer.save_pretrained(tokenizer_dir)
 

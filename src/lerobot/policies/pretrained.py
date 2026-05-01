@@ -168,8 +168,11 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
         """Export this policy as a policy package consumable by the OpenVINO runtime.
 
         OpenVINO loads ONNX models natively, so the serialized artifacts on disk are
-        identical to those produced by :meth:`to_onnx`. The difference is the
-        ``backend`` recorded for runtime loading via :func:`load_exported_policy`.
+        identical to those produced by :meth:`to_onnx`; the manifest does not record
+        which backend was used. To load this package with the OpenVINO runtime,
+        pass ``backend="openvino"`` to :func:`load_exported_policy` (or
+        :meth:`from_exported`); otherwise the loader infers ONNX from the
+        ``.onnx`` artifact suffix.
         """
         return self.export(
             output_dir,

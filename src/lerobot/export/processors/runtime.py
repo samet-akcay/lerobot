@@ -203,6 +203,7 @@ class _TokenizeProcessor:
             return_tensors="np",
         )
         result = dict(data)
+        result.pop("task", None)
         result[OBS_LANGUAGE_TOKENS] = tokenized["input_ids"].astype(np.int64)
         result[OBS_LANGUAGE_ATTENTION_MASK] = tokenized["attention_mask"].astype(np.bool_)
         return result

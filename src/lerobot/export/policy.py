@@ -194,15 +194,13 @@ class ExportedPolicy:
 
 
 def _detect_backend_name(manifest: dict[str, Any], artifacts_dir: Path) -> str:
-    declared = manifest["model"].get("backend")
-    if declared:
-        if declared not in BACKENDS:
-            raise ValueError(
-                f"Manifest declares backend={declared!r} but it is not registered. "
-                f"Registered backends: {sorted(BACKENDS)}."
-            )
-        return declared
+    """Infer the backend to use from the artifact file extensions on disk.
 
+    The manifest does not record which backend produced (or should consume) the
+    artifacts; selection is driven by file suffixes against the registered
+    backends. Callers can bypass this inference by passing ``backend=...``
+    explicitly to :func:`load_exported_policy`.
+    """
     artifact_names = {Path(path).name for path in manifest["model"]["artifacts"].values()}
     candidates = [
         backend_name
@@ -217,7 +215,7 @@ def _detect_backend_name(manifest: dict[str, Any], artifacts_dir: Path) -> str:
         raise ValueError(
             f"Multiple backends match artifacts {sorted(artifact_names)} "
             f"(suffixes: {suffixes}): {candidates}. "
-            "Set model.backend in the manifest or pass backend=... explicitly to load_exported_policy()."
+            "Pass backend=... explicitly to load_exported_policy()."
         )
     raise ValueError(
         f"Cannot detect backend for artifacts {sorted(artifact_names)} "
